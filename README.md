@@ -1,6 +1,15 @@
-# 🎭 DNI MAFIA
+# 🎭 NME (New Mafia Extended Mix)
 
-특수 직업이 가득한 온라인 마피아 게임입니다. 4~50명, 직업 34종(시민 포함).
+특수 직업이 가득한 온라인 마피아 게임입니다. 4~50명, 직업 34종(시민 포함). 통칭 "애너미(enemy)".
+
+**봇:** 대기실에서 방장이 `🤖 봇 추가`를 누르면 AI 플레이어가 들어와요(한 번에 최대 10명). 사람이 모자랄 때나 혼자 연습할 때 쓰세요. 봇은 사람과 같은 규칙으로 능력·투표·잡담을 하고, **남의 직업을 몰래 보지 않아요.**
+`세부설정 → 🤖 봇 난이도`에서 고를 수 있어요.
+| 난이도 | 특징 |
+|---|---|
+| 쉬움 | 거의 무작위. 가끔 행동을 빼먹고 마피아가 실수로 팀원을 고르기도 해요 |
+| 보통 | 마피아끼리 같은 대상을 노려요. 경찰 봇은 조사 결과를 낮에 알려요. 투표 다수 의견을 따라가요 |
+| 어려움 | 채팅 속 "○○ 수상해" 같은 말을 읽고 판단해요. 마피아 봇이 가짜 경찰 행세도 해요 |
+| 극한 | 경찰·의사 등 위협적인 사람을 노려요. 동료가 처형될 게 확실하면 같이 투표해 의심을 피해요. 실수가 거의 없어요 |
 
 ## 1. 내 컴퓨터에서 해보기
 1. [Node.js](https://nodejs.org) LTS 버전을 설치합니다.
@@ -11,14 +20,14 @@
 ## 2. 친구들과 하기 (Render에 올리기)
 ### ① GitHub에 파일 올리기
 1. [github.com](https://github.com) 가입 → 오른쪽 위 `+` → **New repository**
-2. 이름 `dni-mafia`, **Public** 선택 → **Create repository**
+2. 이름 `nme`, **Public** 선택 → **Create repository**
 3. 화면의 **uploading an existing file** 클릭
-4. 이 zip을 먼저 풀고, **안에 있는 파일과 `engine` 폴더 전부**(`server.js`, `roles.js`, `index.html`, `package.json`, `README.md`, `engine`)를 끌어다 놓습니다.
+4. 이 zip을 먼저 풀고, **안에 있는 파일과 `engine` 폴더 전부**(`server.js`, `bots.js`, `roles.js`, `index.html`, `package.json`, `README.md`, `engine`)를 끌어다 놓습니다.
 5. 아래 **Commit changes** 클릭
 
 ### ② Render에서 서버 만들기
 1. [render.com](https://render.com) 가입(GitHub 계정으로 로그인하면 편해요)
-2. **New +** → **Web Service** → 방금 만든 `dni-mafia` 저장소 선택
+2. **New +** → **Web Service** → 방금 만든 `nme` 저장소 선택
 3. 설정
    - Language/Runtime: **Node**
    - Build Command: `npm install`
@@ -37,6 +46,7 @@
 |---|---|
 | `server.js` | 방/접속/채팅/단계 진행을 처리하는 서버 |
 | `roles.js` | 직업 목록과 설명 |
+| `bots.js` | 봇의 판단(난이도별) |
 | `engine/` | 직업 능력, 밤 처리 순서, 투표, 승리 조건 |
 | `index.html` | 화면 |
 

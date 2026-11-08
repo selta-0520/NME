@@ -1,5 +1,5 @@
 'use strict';
-// DNI MAFIA 서버 — 외부 패키지 없이 Node.js 기본 기능만 사용합니다.
+// NME (New Mafia Extended Mix) 서버 — 외부 패키지 없이 Node.js 기본 기능만 사용합니다.
 // 실행: node server.js  →  http://localhost:3000
 // 게임 규칙(직업 능력)은 engine/ 폴더에 있습니다.
 
@@ -10,6 +10,7 @@ const crypto = require('crypto');
 const { ROLES, ROLE, TEAM_NAMES } = require('./roles');
 const E = require('./engine');
 const { U } = E;
+const Bots = require('./bots');
 
 const PORT = Number(process.env.PORT) || 3000;
 const MIN_PLAYERS = 4;
@@ -46,6 +47,7 @@ function defaultSettings() {
     citizenSpecialMax: 12,
     neutralMax: 2,
     revealOnDeath: true,
+    botLevel: 'normal',
     enabledRoles: ROLES.filter((r) => !r.fixed).map((r) => r.key),
   };
 }
@@ -54,6 +56,7 @@ function applySettings(s, patch) {
     if (patch[k] !== undefined) s[k] = clamp(patch[k], LIMITS[k], s[k]);
   }
   if (patch.revealOnDeath !== undefined) s.revealOnDeath = !!patch.revealOnDeath;
+  if (Bots.LEVEL_KEYS.includes(patch.botLevel)) s.botLevel = patch.botLevel;
   if (Array.isArray(patch.enabledRoles)) {
     const ok = new Set(ROLES.filter((r) => !r.fixed).map((r) => r.key));
     s.enabledRoles = [...new Set(patch.enabledRoles)].filter((k) => ok.has(k));
@@ -71,7 +74,7 @@ function newCode() {
 }
 function makePlayer(name) {
   return { id: rid(4), token: rid(16), name, role: null, alive: true, conns: new Set(),
-    lastChat: 0, dcTimer: null, s: {}, team: null, contacted: false, destroyed: false, exorcised: false };
+    lastChat: 0, dcTimer: null, bot: false, s: {}, team: null, contacted: false, destroyed: false, exorcised: false };
 }
 function createRoom(hostName) {
   const host = makePlayer(hostName);
@@ -98,6 +101,7 @@ function addChat(room, ch, text, from, to) {
   room.chat.push(m);
   if (room.chat.length > 400) room.chat.shift();
   for (const p of room.players) if (E.canSeeMsg(room, p, m)) sendToPlayer(p, 'chat', pubMsg(m));
+  if (from && !from.bot && ch === 'all' && (room.phase === 'day' || room.phase === 'vote')) Bots.hear(room, { from: from.id, text });
   return m;
 }
 function sendBacklog(room, p) {
@@ -119,7 +123,7 @@ function viewFor(room, p) {
   const s = room.settings;
   const inGame = room.phase !== 'lobby';
   const players = room.players.map((q) => {
-    const o = { id: q.id, name: q.name, alive: q.alive, host: q.id === room.hostId, connected: q.conns.size > 0 };
+    const o = { id: q.id, name: q.name, alive: q.alive, host: q.id === room.hostId, connected: q.bot || q.conns.size > 0, bot: !!q.bot };
     if (inGame && q.role && E.knowsRole(room, p, q)) {
       o.role = (room.phase === 'ended' || (!q.alive && s.revealOnDeath)) ? q.role : E.shownRoleTo(p, q);
     }
@@ -165,9 +169,11 @@ function setPhase(room, phase) {
   if (phase === 'night') E.startNight(room);
   if (phase === 'vote') { room.votes = {}; room.voteActs = {}; }
   broadcastState(room);
+  if (phase === 'night' || phase === 'day' || phase === 'vote') Bots.schedule(room);
 }
 
 function startGame(room) {
+  Bots.reset(room);
   E.assignRoles(room);
   room.day = 1; room.winner = null; room.votes = {}; room.voteActs = {};
   addChat(room, 'sys', '🎭 게임이 시작되었습니다! 직업이 배정되었어요.');
@@ -218,13 +224,14 @@ function advance(room) {
 
 function resetToLobby(room) {
   clearTimeout(room.timer);
+  Bots.reset(room);
   room.phase = 'lobby'; room.day = 0; room.winner = null; room.night = null; room.votes = {}; room.voteActs = {};
   room.touches = []; room.pendingWin = null; room.endsAt = 0; room.chat = []; room.seq++;
   for (const p of room.players) {
     p.role = null; p.alive = true; p.s = {}; p.team = null; p.contacted = false; p.destroyed = false; p.exorcised = false;
   }
-  room.players = room.players.filter((p) => p.conns.size > 0); // 접속이 끊긴 사람은 정리
-  if (!byId(room, room.hostId) && room.players[0]) room.hostId = room.players[0].id;
+  room.players = room.players.filter((p) => p.bot || p.conns.size > 0); // 접속이 끊긴 사람은 정리(봇은 유지)
+  if (!byId(room, room.hostId)) { const h = room.players.find((x) => !x.bot); if (h) room.hostId = h.id; }
   addChat(room, 'sys', '🔄 새 게임을 준비합니다.');
   for (const p of room.players) sendBacklog(room, p);
   broadcastState(room);
@@ -236,9 +243,9 @@ function removePlayer(room, p) {
   room.players = room.players.filter((x) => x !== p);
   for (const res of p.conns) { sse(res, 'kicked', {}); try { res.end(); } catch (e) { /* */ } }
   p.conns.clear();
-  if (!room.players.length) { clearTimeout(room.timer); rooms.delete(room.code); return; }
+  if (!room.players.some((x) => !x.bot)) { clearTimeout(room.timer); rooms.delete(room.code); return; }
   if (room.hostId === p.id) {
-    const next = room.players.find((x) => x.conns.size) || room.players[0];
+    const next = room.players.find((x) => !x.bot && x.conns.size) || room.players.find((x) => !x.bot);
     room.hostId = next.id;
   }
   broadcastState(room);
@@ -252,7 +259,7 @@ function onDisconnect(room, p) {
     if (!rooms.has(room.code) || p.conns.size) return;
     if (room.phase === 'lobby') removePlayer(room, p);
     else if (room.hostId === p.id) {
-      const next = room.players.find((x) => x.conns.size);
+      const next = room.players.find((x) => !x.bot && x.conns.size);
       if (next) { room.hostId = next.id; broadcastState(room); }
     }
   }, 30000);
@@ -290,6 +297,19 @@ function handleAction(room, p, b) {
       const t = byId(room, b.target);
       if (!t || t.id === p.id) fail('내보낼 수 없는 대상이에요.');
       removePlayer(room, t);
+      return;
+    }
+    case 'addbot': {
+      if (!isHost) fail('방장만 봇을 추가할 수 있어요.');
+      if (room.phase !== 'lobby') fail('게임 중에는 봇을 추가할 수 없어요.');
+      const want = Math.max(1, Math.min(10, Math.round(Number(b.count) || 1)));
+      let added = 0;
+      for (let i = 0; i < want && room.players.length < MAX_PLAYERS; i++) {
+        let n = 1; while (room.players.some((x) => x.name === `봇${n}`)) n++;
+        const bot = makePlayer(`봇${n}`); bot.bot = true; room.players.push(bot); added++;
+      }
+      if (!added) fail('방이 가득 찼어요.');
+      broadcastState(room);
       return;
     }
     case 'start': {
@@ -350,6 +370,8 @@ function handleAction(room, p, b) {
     default: fail('알 수 없는 요청이에요.');
   }
 }
+
+Bots.init({ handleAction, rooms });
 
 // ---------------------------------------------------------------- HTTP
 const INDEX = path.join(__dirname, 'index.html');
@@ -459,5 +481,5 @@ setInterval(() => {
 
 module.exports = { server, rooms, advance, startGame, E, createRoom, makePlayer, setPhase, handleAction, viewFor };
 if (require.main === module) {
-  server.listen(PORT, () => console.log(`DNI MAFIA 서버 실행 중: http://localhost:${PORT}`));
+  server.listen(PORT, () => console.log(`NME 서버 실행 중: http://localhost:${PORT}`));
 }

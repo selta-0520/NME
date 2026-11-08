@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>DNI MAFIA</title>
+<title>NME · New Mafia Extended Mix</title>
 <style>
   :root{
     --bg:#12141c; --panel:#1b1f2b; --panel2:#242a3a; --line:#313952; --text:#e8ebf4; --dim:#8b93ab;
@@ -102,8 +102,8 @@
 <body>
 
 <div id="home" class="screen">
-  <h1>🎭 DNI MAFIA</h1>
-  <p>특수 직업이 가득한 마피아 게임</p>
+  <h1>🎭 NME</h1>
+  <p>New Mafia Extended Mix · 특수 직업이 가득한 마피아 게임</p>
   <div class="card">
     <div style="margin-bottom:6px;color:var(--dim);font-size:13px">내 이름 (최대 10자)</div>
     <input type="text" id="nameInput" maxlength="10" placeholder="이름을 입력하세요" autocomplete="off">
@@ -349,6 +349,7 @@ function playerCard(q, opts) {
   if (!q.connected) cls.push('off');
   const card = h('div', { class: cls.join(' '), onclick: click ? () => clickPlayer(q) : null });
   if (q.host) card.append(h('span', { class: 'crown' }, '👑'));
+  if (q.bot) card.append(h('span', { class: 'crown', style: 'left:auto;right:6px' }, '🤖'));
   card.append(h('div', { class: 'pname' }, q.name));
   if (q.role) card.append(h('div', { class: 'ptag ' + ROLE[q.role].team }, ROLE[q.role].name));
   if (!q.alive) card.append(h('div', { class: 'ptag' }, '💀 사망'));
@@ -455,6 +456,8 @@ function renderLobby(main) {
   const acts = h('div', { class: 'actions' });
   if (isHost()) {
     const enough = st.players.length >= st.minPlayers;
+    acts.append(h('button', { class: 'ghost', onclick: () => act('addbot', { count: 1 }) }, '🤖 봇 추가'));
+    acts.append(h('button', { class: 'ghost', onclick: () => act('addbot', { count: 5 }) }, '🤖 봇 5명 추가'));
     acts.append(h('button', { disabled: !enough, onclick: () => act('start') }, enough ? '▶ 게임 시작' : `${st.minPlayers}명이 모이면 시작할 수 있어요`));
   } else acts.append(h('div', { class: 'hint' }, '방장이 시작하길 기다리는 중…'));
   acts.append(h('button', { class: 'ghost', onclick: () => { act('leave'); leaveLocal(); } }, '나가기'));
@@ -492,6 +495,10 @@ function buildSettings() {
     numField('nightSec', '🌙 밤 시간', '초'),
     numField('daySec', '☀️ 낮(토론) 시간', '초'),
     numField('voteSec', '🗳 투표 시간', '초'),
+    h('h3', null, '🤖 봇 난이도'),
+    h('div', { class: 'seg' }, [['easy', '쉬움'], ['normal', '보통'], ['hard', '어려움'], ['extreme', '극한']].map(([k, l]) =>
+      h('button', { class: 'ghost', 'data-lv': k, onclick: () => { if (host) sendPatch({ botLevel: k }); } }, l))),
+    h('div', { class: 'note', id: 'lvnote', style: 'margin-top:6px' }, ''),
     h('h3', null, '👥 팀별 특수 직업 최대 인원'),
     h('div', { class: 'note' }, '일반 마피아·시민을 뺀 "특수 직업"을 팀마다 최대 몇 명까지 넣을지 정해요. 마피아 수는 참가 인원에 맞춰 자동으로 정해져요. (인원 ÷ 4, 최소 1명)'),
     numField('mafiaSpecialMax', '마피아 팀', '명'),
@@ -535,6 +542,10 @@ function syncSettings(force) {
     if (inp.type === 'checkbox') inp.checked = !!s[k]; else inp.value = s[k];
     inp.disabled = !host;
   }
+  const LVNOTE = { easy: '거의 무작위로 움직이고, 가끔 행동을 빼먹거나 실수해요.', normal: '마피아끼리 협력하고, 경찰은 조사 결과를 알려요. 다수 의견을 따라요.',
+    hard: '채팅 속 의심·지목을 읽고 판단해요. 마피아는 가짜 경찰 행세도 해요.', extreme: '위협적인 사람을 노리고, 필요하면 동료를 희생해 의심을 피해요. 실수가 거의 없어요.' };
+  for (const b of sheet.querySelectorAll('button[data-lv]')) b.className = b.getAttribute('data-lv') === s.botLevel ? '' : 'ghost';
+  const note = sheet.querySelector('#lvnote'); if (note) note.textContent = (LVNOTE[s.botLevel] || '') + ' (봇은 남의 직업을 몰래 보지 않아요)';
   for (const cb of sheet.querySelectorAll('input[data-role]')) {
     const r = ROLE[cb.getAttribute('data-role')];
     if (r.fixed) continue;
