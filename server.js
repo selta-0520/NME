@@ -48,6 +48,8 @@ function defaultSettings() {
     neutralMax: 2,
     revealOnDeath: true,
     botLevel: 'normal',
+    selfVote: true,
+    forcedRoles: [],
     enabledRoles: ROLES.filter((r) => !r.fixed).map((r) => r.key),
   };
 }
@@ -57,9 +59,20 @@ function applySettings(s, patch) {
   }
   if (patch.revealOnDeath !== undefined) s.revealOnDeath = !!patch.revealOnDeath;
   if (Bots.LEVEL_KEYS.includes(patch.botLevel)) s.botLevel = patch.botLevel;
-  if (Array.isArray(patch.enabledRoles)) {
-    const ok = new Set(ROLES.filter((r) => !r.fixed).map((r) => r.key));
-    s.enabledRoles = [...new Set(patch.enabledRoles)].filter((k) => ok.has(k));
+  if (patch.selfVote !== undefined) s.selfVote = !!patch.selfVote;
+  const ok = new Set(ROLES.filter((r) => !r.fixed).map((r) => r.key));
+  const hasEnabledPatch = Array.isArray(patch.enabledRoles), hasForcedPatch = Array.isArray(patch.forcedRoles);
+  if (hasEnabledPatch) s.enabledRoles = [...new Set(patch.enabledRoles)].filter((k) => ok.has(k));
+  if (hasForcedPatch) {
+    s.forcedRoles = [...new Set(patch.forcedRoles)].filter((k) => ok.has(k));
+    for (const k of s.forcedRoles) if (!s.enabledRoles.includes(k)) s.enabledRoles.push(k); // 필수 지정하면 자동으로 사용 설정
+  } else if (hasEnabledPatch) s.forcedRoles = s.forcedRoles.filter((k) => s.enabledRoles.includes(k));
+  // 거지·부자는 항상 함께 (필수/사용 모두)
+  const pairKeys = ['beggar', 'rich'];
+  const fo = s.forcedRoles, en = s.enabledRoles;
+  if (pairKeys.some((k) => fo.includes(k)) && !pairKeys.every((k) => fo.includes(k))) {
+    if (hasForcedPatch) { for (const k of pairKeys) { if (!fo.includes(k)) fo.push(k); if (!en.includes(k)) en.push(k); } }
+    else s.forcedRoles = fo.filter((k) => !pairKeys.includes(k));
   }
 }
 
@@ -113,6 +126,7 @@ function killPlayer(room, p, how) {
   p.alive = false;
   const rev = room.settings.revealOnDeath ? ` (직업: ${roleName(p.role)})` : '';
   addChat(room, 'sys', `💀 ${p.name}님이 ${how}${rev}`);
+  Bots.onDeath(room, p, how);
 }
 // 엔진이 쓰는 출력 함수 연결
 U.io.sys = (room, text) => addChat(room, 'sys', text);
@@ -136,6 +150,7 @@ function viewFor(room, p) {
   };
   if (inGame) {
     v.me = E.meView(room, p);
+    if (room.phase === 'day') v.dayAdj = (room.dayAdj && room.dayAdj[p.id]) || null;
     if (room.phase === 'vote') {
       const tally = {}; let skip = 0;
       for (const [vid, t] of Object.entries(room.votes)) {
@@ -167,6 +182,7 @@ function setPhase(room, phase) {
     room.timer = setTimeout(() => { if (room.seq === seq) advance(room); }, sec * 1000);
   } else room.endsAt = 0;
   if (phase === 'night') E.startNight(room);
+  if (phase === 'day') room.dayAdj = {};
   if (phase === 'vote') { room.votes = {}; room.voteActs = {}; }
   broadcastState(room);
   if (phase === 'night' || phase === 'day' || phase === 'vote') Bots.schedule(room);
@@ -174,9 +190,10 @@ function setPhase(room, phase) {
 
 function startGame(room) {
   Bots.reset(room);
-  E.assignRoles(room);
+  const skipped = E.assignRoles(room);
   room.day = 1; room.winner = null; room.votes = {}; room.voteActs = {};
   addChat(room, 'sys', '🎭 게임이 시작되었습니다! 직업이 배정되었어요.');
+  if (skipped && skipped.length) addChat(room, 'sys', `⚠ 인원이 부족해 필수 직업 중 ${skipped.map(roleName).join(', ')}은(는) 이번 판에 넣지 못했어요.`);
   for (const p of room.players) {
     U.priv(room, p, `🎭 당신의 직업은 "${roleName(p.role)}" (${TEAM_NAMES[ROLE[p.role].team]}) 입니다.`);
     if (U.inMafiaChat(p)) {
@@ -204,14 +221,18 @@ function endGame(room, w) {
 
 function advance(room) {
   if (room.phase === 'night') {
+    const before = alivePlayers(room).map((x) => x.id);
     E.resolveNight(room);
+    Bots.afterResolve(room, before, null);
     const w = E.checkWin(room);
     if (w) endGame(room, w); else setPhase(room, 'day');
   } else if (room.phase === 'day') {
     addChat(room, 'sys', '🗳 투표 시간입니다. 처형할 사람을 선택하세요.');
     setPhase(room, 'vote');
   } else if (room.phase === 'vote') {
+    const before = alivePlayers(room).map((x) => x.id), snap = Object.assign({}, room.votes);
     E.resolveVote(room);
+    Bots.afterResolve(room, before, snap);
     const w = E.checkWin(room);
     if (w) endGame(room, w);
     else {
@@ -345,6 +366,24 @@ function handleAction(room, p, b) {
       broadcastState(room);
       return;
     }
+    case 'timeadj': {
+      if (room.phase !== 'day') fail('아침 시간에만 쓸 수 있어요.');
+      if (!p.alive) fail('죽은 사람은 쓸 수 없어요.');
+      if (b.dir !== 'short' && b.dir !== 'long') fail('알 수 없는 요청이에요.');
+      room.dayAdj = room.dayAdj || {};
+      if (room.dayAdj[p.id]) fail('오늘은 이미 시간 조절을 썼어요. (아침마다 한 번)');
+      room.dayAdj[p.id] = b.dir;
+      const now = Date.now();
+      const before = room.endsAt;
+      room.endsAt = b.dir === 'short' ? Math.max(now + 1000, room.endsAt - 5000) : room.endsAt + 5000;
+      clearTimeout(room.timer);
+      const seq = room.seq;
+      room.timer = setTimeout(() => { if (room.seq === seq) advance(room); }, Math.max(0, room.endsAt - now));
+      const left = Math.max(0, Math.ceil((room.endsAt - now) / 1000));
+      addChat(room, 'sys', `${b.dir === 'short' ? '⏩' : '⏪'} ${p.name}님이 아침 시간을 ${Math.round(Math.abs(room.endsAt - before) / 1000)}초 ${b.dir === 'short' ? '줄였어요' : '늘렸어요'}. (남은 시간 ${left}초)`);
+      broadcastState(room);
+      return;
+    }
     case 'vote': {
       if (room.phase !== 'vote') fail('지금은 투표 시간이 아니에요.');
       if (!p.alive) fail('죽은 사람은 투표할 수 없어요.');
@@ -355,7 +394,7 @@ function handleAction(room, p, b) {
       else {
         const t = byId(room, b.target);
         if (!t || !t.alive) fail('투표할 수 없는 대상이에요.');
-        if (t.id === p.id) fail('자신에게는 투표할 수 없어요.');
+        if (t.id === p.id && !room.settings.selfVote) fail('자신에게는 투표할 수 없어요.');
         room.votes[p.id] = t.id;
       }
       broadcastState(room);

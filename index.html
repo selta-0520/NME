@@ -92,10 +92,25 @@
   .rrow .rn{font-weight:700}
   .rrow .rd{font-size:12.5px;color:var(--dim);line-height:1.45;margin-top:2px}
   .rrow.off{opacity:.45}
+  .rrow .forced{display:flex;align-items:center;gap:6px;font-size:12.5px;color:var(--neutral);margin-top:5px}
+  .rrow .forced input{margin:0;width:16px;height:16px}
   .soon{font-size:11px;background:var(--line);color:var(--dim);padding:1px 6px;border-radius:6px;margin-left:6px}
   .teamhead{display:flex;justify-content:space-between;align-items:center;margin-top:16px}
   .teamhead span{font-weight:800}
   .teamhead button{padding:4px 10px;font-size:12px}
+  .hbtn{background:var(--panel2);color:var(--text);padding:6px 10px;font-size:13px;border-radius:999px}
+  .memo-btn{position:absolute;bottom:2px;right:3px;background:none;color:var(--dim);padding:2px 5px;font-size:14px;line-height:1}
+  .ptag.memo{color:var(--dim);font-style:italic;border-top:1px dashed var(--line);padding-top:3px;margin-top:5px}
+  .tabs{display:flex;gap:6px;margin:10px 0 4px}
+  .tabs button{flex:1;padding:8px 6px;font-size:13.5px}
+  .gp{font-size:13.5px;line-height:1.6}
+  .gp p{margin:4px 0}
+  .gp .k{font-weight:700}
+  .chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:4px}
+  .chips button{padding:7px 10px;font-size:13px;background:var(--panel2);color:var(--text);border:1px solid var(--line)}
+  .chips button.on{color:#fff;border-color:transparent}
+  .chips button.on.mafia{background:#b9374a} .chips button.on.citizen{background:#2f6fb8} .chips button.on.neutral{background:#a47d1c}
+  .mine{font-size:11px;background:var(--accent);color:#fff;padding:1px 6px;border-radius:6px;margin-left:6px}
   #toast{position:fixed;left:50%;bottom:90px;transform:translateX(-50%);background:#000c;border:1px solid var(--line);padding:10px 16px;border-radius:12px;z-index:20;max-width:88vw;text-align:center}
 </style>
 </head>
@@ -269,6 +284,7 @@ function render() {
   if (!st || !meta) return;
   $('#home').hidden = true; $('#room').hidden = false;
   document.body.className = st.phase === 'night' ? 'night' : (st.phase === 'day' || st.phase === 'vote') ? 'day' : '';
+  if (st.phase === 'lobby') clearMemo();
   renderTop(); renderMain();
   const ci = chatInfo();
   $('#chatlabel').textContent = ci.label;
@@ -289,6 +305,7 @@ function renderTop() {
   top.append(h('div', { class: 'title' }, PHASE_TITLE[st.phase]()));
   if (st.phase === 'lobby') top.append(h('div', { class: 'timer', style: 'letter-spacing:3px' }, st.code));
   else if (st.endsAt) top.append(h('div', { class: 'timer', id: 'timer' }, fmt(remaining())));
+  top.append(h('button', { class: 'hbtn', onclick: openGuide }, '📖 설명서'));
 }
 
 let uiMode = 'vote', lastPhaseKey = '', progDraft = null;
@@ -299,7 +316,7 @@ function targetable(q) {
   if (st.phase === 'night') return !!(me.night && me.night.targets.includes(q.id));
   if (st.phase === 'vote') {
     if (uiMode === 'ability' && me.voteAbility) return me.voteAbility.targets.includes(q.id);
-    return me.canVote && q.alive && q.id !== st.meId;
+    return me.canVote && q.alive && (q.id !== st.meId || !!st.settings.selfVote);
   }
   return false;
 }
@@ -352,6 +369,11 @@ function playerCard(q, opts) {
   if (q.bot) card.append(h('span', { class: 'crown', style: 'left:auto;right:6px' }, '🤖'));
   card.append(h('div', { class: 'pname' }, q.name));
   if (q.role) card.append(h('div', { class: 'ptag ' + ROLE[q.role].team }, ROLE[q.role].name));
+  if (!q.role && memoOn(q)) {
+    const mm = getMemo()[q.id];
+    if (mm && mm.length) card.append(h('div', { class: 'ptag memo' }, '📝 ' + mm.map((k) => ROLE[k] ? ROLE[k].name : k).join('/') + '?'));
+    card.append(h('button', { class: 'memo-btn', title: '직업 메모', onclick: (e) => { e.stopPropagation(); openMemo(q.id); } }, '📝'));
+  }
   if (!q.alive) card.append(h('div', { class: 'ptag' }, '💀 사망'));
   else if (!q.connected && st.phase !== 'lobby') card.append(h('div', { class: 'ptag' }, '연결 끊김'));
   if (st.phase === 'ended' && st.winner && st.winner.ids.includes(q.id)) card.append(h('div', { class: 'ptag', style: 'color:var(--ok)' }, '🏆 승리'));
@@ -416,6 +438,15 @@ function renderMain() {
     }
   }
 
+  if (st.phase === 'day' && me.alive) {
+    const used = st.dayAdj;
+    main.append(h('div', { class: 'card' },
+      h('div', { class: 'albl', style: 'font-weight:700;margin-bottom:6px' }, '⏱ 아침 시간 조절'),
+      h('div', { class: 'seg' },
+        h('button', { class: used === 'short' ? '' : 'ghost', disabled: !!used, onclick: () => act('timeadj', { dir: 'short' }) }, '⏩ 5초 줄이기'),
+        h('button', { class: used === 'long' ? '' : 'ghost', disabled: !!used, onclick: () => act('timeadj', { dir: 'long' }) }, '⏪ 5초 늘리기')),
+      h('div', { class: 'hint', style: 'margin-top:6px' }, used ? `오늘은 ${used === 'short' ? '줄이기' : '늘리기'}를 썼어요. (아침마다 한 번만 쓸 수 있어요)` : '둘 중 하나만, 아침마다 한 번 쓸 수 있어요. 쓰면 모두에게 알려져요.')));
+  }
   const grid = h('div', { class: 'grid' });
   const clickable = (st.phase === 'night' || st.phase === 'vote');
   for (const q of st.players) grid.append(playerCard(q, { clickable }));
@@ -472,6 +503,7 @@ function copy(text) {
 const TEAM_COLOR = { mafia: 'var(--mafia)', citizen: 'var(--citizen)', neutral: 'var(--neutral)' };
 function openSettings() { settingsOpen = true; buildSettings(); $('#modal').hidden = false; }
 function closeSettings() { settingsOpen = false; $('#modal').hidden = true; }
+const closeModal = closeSettings;
 $('#modal').addEventListener('click', (e) => { if (e.target.id === 'modal') closeSettings(); });
 
 function numField(key, label, unit) {
@@ -484,6 +516,10 @@ function sendPatch(patch) { act('settings', { patch }); }
 function rolePatch() {
   const on = [...document.querySelectorAll('#sheet input[data-role]')].filter((c) => c.checked).map((c) => c.getAttribute('data-role'));
   sendPatch({ enabledRoles: on });
+}
+function forcedPatch() {
+  const on = [...document.querySelectorAll('#sheet input[data-forced]')].filter((c) => c.checked).map((c) => c.getAttribute('data-forced'));
+  sendPatch({ forcedRoles: on });
 }
 function buildSettings() {
   const sheet = $('#sheet'); sheet.innerHTML = '';
@@ -505,10 +541,13 @@ function buildSettings() {
     numField('citizenSpecialMax', '시민 팀', '명'),
     numField('neutralMax', '중립 팀', '명'),
     h('h3', null, '기타'),
+    h('label', { class: 'field' }, h('span', null, '자기 자신에게 투표 허용'),
+      h('input', { type: 'checkbox', 'data-key': 'selfVote', style: 'width:20px;height:20px', onchange: (e) => sendPatch({ selfVote: e.target.checked }) })),
     h('label', { class: 'field' }, h('span', null, '죽으면 직업 공개'),
       h('input', { type: 'checkbox', 'data-key': 'revealOnDeath', style: 'width:20px;height:20px', onchange: (e) => sendPatch({ revealOnDeath: e.target.checked }) })),
     h('h3', null, '🎭 사용할 직업'),
-    h('div', { class: 'note' }, '체크한 직업만 게임에 나와요. 커플은 2명이 함께, 거지와 부자는 둘 다 체크해야 함께 나와요. 인원이 적으면 모든 직업이 나오지는 않아요.'));
+    h('div', { class: 'note' }, '체크한 직업만 게임에 나와요. 커플은 2명이 함께, 거지와 부자는 둘 다 체크해야 함께 나와요. 인원이 적으면 모든 직업이 나오지는 않아요.'),
+    h('div', { class: 'note', style: 'margin-top:4px' }, '⭐ "필수 등장"을 켜면 그 직업은 팀 최대 인원을 넘더라도 무조건 나와요. (인원이 모자라면 못 넣을 수 있어요. 거지·부자는 함께 켜져요)'));
 
   for (const team of ['mafia', 'citizen', 'neutral']) {
     const roles = meta.roles.filter((r) => r.team === team);
@@ -524,10 +563,12 @@ function buildSettings() {
       const usable = r.impl && !r.fixed;
       const cb = h('input', { type: 'checkbox', 'data-role': r.key, disabled: !usable || !host, onchange: rolePatch });
       if (r.fixed) { cb.checked = true; cb.disabled = true; }
+      const fc = h('input', { type: 'checkbox', 'data-forced': r.key, disabled: !usable || !host, onchange: forcedPatch });
       sheet.append(h('div', { class: 'rrow' + (r.impl ? '' : ' off') }, cb,
-        h('div', null,
+        h('div', { class: 'grow' },
           h('div', { class: 'rn' }, r.name, r.fixed ? h('span', { class: 'soon' }, '기본') : null, r.impl ? null : h('span', { class: 'soon' }, '준비 중')),
-          h('div', { class: 'rd' }, r.desc))));
+          h('div', { class: 'rd' }, r.desc),
+          usable ? h('label', { class: 'forced' }, fc, '⭐ 필수 등장') : null)));
     }
   }
   syncSettings(true);
@@ -542,8 +583,8 @@ function syncSettings(force) {
     if (inp.type === 'checkbox') inp.checked = !!s[k]; else inp.value = s[k];
     inp.disabled = !host;
   }
-  const LVNOTE = { easy: '거의 무작위로 움직이고, 가끔 행동을 빼먹거나 실수해요.', normal: '마피아끼리 협력하고, 경찰은 조사 결과를 알려요. 다수 의견을 따라요.',
-    hard: '채팅 속 의심·지목을 읽고 판단해요. 마피아는 가짜 경찰 행세도 해요.', extreme: '위협적인 사람을 노리고, 필요하면 동료를 희생해 의심을 피해요. 실수가 거의 없어요.' };
+  const LVNOTE = { easy: '나름 판단은 하지만 자주 틀리고, 가끔 행동을 빼먹어요.', normal: '마피아끼리 밤·투표를 맞추고, 경찰은 결과를 알려요. 투표 기록과 채팅으로 의심해요.',
+    hard: '누가 누굴 지목했는지 기억하고, 처형된 사람의 직업으로 추리해요. 마피아는 가짜 경찰 행세도 해요.', extreme: '거의 실수 없이 위협적인 사람을 노리고, 필요하면 동료를 희생해 의심을 피해요.' };
   for (const b of sheet.querySelectorAll('button[data-lv]')) b.className = b.getAttribute('data-lv') === s.botLevel ? '' : 'ghost';
   const note = sheet.querySelector('#lvnote'); if (note) note.textContent = (LVNOTE[s.botLevel] || '') + ' (봇은 남의 직업을 몰래 보지 않아요)';
   for (const cb of sheet.querySelectorAll('input[data-role]')) {
@@ -551,6 +592,108 @@ function syncSettings(force) {
     if (r.fixed) continue;
     cb.checked = s.enabledRoles.includes(r.key);
     cb.disabled = !(r.impl && host);
+  }
+  for (const fc of sheet.querySelectorAll('input[data-forced]')) {
+    const r = ROLE[fc.getAttribute('data-forced')];
+    fc.checked = (s.forcedRoles || []).includes(r.key);
+    fc.disabled = !(r.impl && host);
+  }
+}
+
+
+/* ------------------------------------------------ 메모 (내 기기에만 저장, 다른 사람은 못 봐요) */
+let memoCache = null;
+function getMemo() {
+  if (!st) return {};
+  if (!memoCache || memoCache.code !== st.code) {
+    let v = null; try { v = JSON.parse(sessionStorage.getItem('nme-memo') || 'null'); } catch (e) { /* */ }
+    memoCache = (v && v.code === st.code) ? v : { code: st.code, m: {} };
+  }
+  return memoCache.m;
+}
+function saveMemo() { try { sessionStorage.setItem('nme-memo', JSON.stringify(memoCache)); } catch (e) { /* */ } }
+function clearMemo() { if (memoCache && Object.keys(memoCache.m).length) { memoCache.m = {}; saveMemo(); } else if (!memoCache) { try { sessionStorage.removeItem('nme-memo'); } catch (e) { /* */ } } }
+function memoOn(q) { return st.phase !== 'lobby' && st.phase !== 'ended' && q.id !== st.meId; }
+function memoRoles() { // 이번 판에 나올 수 있는 직업만
+  const on = st.settings.enabledRoles || [];
+  return meta.roles.filter((r) => r.impl && (r.fixed || on.includes(r.key)));
+}
+function openMemo(pid) {
+  const q = pById(pid); if (!q) return;
+  const sheet = $('#sheet'); sheet.innerHTML = '';
+  const cur = getMemo()[pid] || [];
+  sheet.append(
+    h('div', { class: 'row' }, h('h2', { class: 'grow' }, `📝 ${q.name}님은 무슨 직업일까?`), h('button', { class: 'ghost', onclick: closeModal }, '닫기')),
+    h('div', { class: 'note' }, '추리용 메모예요. 나만 볼 수 있고 게임 결과에는 영향이 없어요. 최대 3개까지 고를 수 있어요. (눌러서 켜고 끄기)'));
+  for (const team of ['mafia', 'citizen', 'neutral']) {
+    const rs = memoRoles().filter((r) => r.team === team);
+    if (!rs.length) continue;
+    sheet.append(h('h3', { style: 'color:' + TEAM_COLOR[team] }, meta.teams[team]),
+      h('div', { class: 'chips' }, rs.map((r) => h('button', { class: (cur.includes(r.key) ? 'on ' : '') + team, onclick: () => {
+        const m = getMemo(); let a = (m[pid] || []).slice();
+        if (a.includes(r.key)) a = a.filter((k) => k !== r.key);
+        else { if (a.length >= 3) { toast('최대 3개까지 고를 수 있어요.'); return; } a.push(r.key); }
+        if (a.length) m[pid] = a; else delete m[pid];
+        saveMemo(); openMemo(pid); render();
+      } }, r.name))));
+  }
+  sheet.append(h('div', { class: 'actions', style: 'margin-top:14px' },
+    h('button', { class: 'ghost', onclick: () => { delete getMemo()[pid]; saveMemo(); openMemo(pid); render(); } }, '이 사람 메모 지우기'),
+    h('button', { class: 'ghost', onclick: () => { memoCache.m = {}; saveMemo(); closeModal(); render(); } }, '전체 메모 지우기')));
+  settingsOpen = false; $('#modal').hidden = false;
+}
+
+/* ------------------------------------------------ 설명서 */
+let guideTab = 'rules';
+function openGuide() { buildGuide(); settingsOpen = false; $('#modal').hidden = false; }
+function buildGuide() {
+  const sheet = $('#sheet'); sheet.innerHTML = '';
+  const tab = (k, l) => h('button', { class: guideTab === k ? '' : 'ghost', onclick: () => { guideTab = k; buildGuide(); } }, l);
+  sheet.append(
+    h('div', { class: 'row' }, h('h2', { class: 'grow' }, '📖 설명서'), h('button', { class: 'ghost', onclick: closeModal }, '닫기')),
+    h('div', { class: 'tabs' }, tab('rules', '진행·규칙'), tab('roles', '직업 도감'), tab('tips', '메모·팁')));
+  const P = (...c) => h('p', null, ...c);
+  const K = (t) => h('span', { class: 'k' }, t);
+  if (guideTab === 'rules') {
+    sheet.append(h('div', { class: 'gp' },
+      h('h3', null, '🔁 게임 진행'),
+      P('1일차 ', K('밤'), '부터 시작해요. 밤 → 아침(토론) → 투표 → 밤 … 순서로 돌아가요.'),
+      P(K('밤'), ': 능력이 있는 직업은 카드를 눌러 대상을 골라요. 마피아는 팀끼리 한 명을 정해 죽여요.'),
+      P(K('아침'), ': 밤에 일어난 일이 알려지고 자유롭게 토론해요.'),
+      P(K('투표'), ': 처형할 사람을 골라요. 최다 득표자가 ', K('한 명일 때만'), ' 처형되고, 동률이면 아무도 처형되지 않아요. 기권도 가능해요. 방 설정에 따라 자기 자신에게도 투표할 수 있어요. 투표할 수 있는 모두가 투표하면 바로 개표해요.'),
+      P(K('아침 시간 조절'), ': 살아 있는 사람은 아침마다 한 번, "5초 줄이기"와 "5초 늘리기" 중 하나를 쓸 수 있어요. 쓰면 모두에게 알려져요.'),
+      h('h3', null, '🏆 승리 조건'),
+      P(K('시민 팀'), ': 마피아 팀과 중립 팀이 모두 사라지면 승리.'),
+      P(K('마피아 팀'), ': 시민 팀 + 중립 팀 인원이 마피아 팀 인원과 같거나 적어지면 승리.'),
+      P(K('중립 팀'), ': 기본은 자신을 제외한 모두가 사라지면 승리. 직업마다 따로 정해진 방식이 있으면 그걸 따라요. (거지·부자, 혁명가, 광대 등은 도감 참고)'),
+      h('h3', null, '💬 채팅'),
+      P(K('낮'), '에는 모두가 함께 얘기해요. ', K('밤'), '에는 접선한 마피아 팀끼리, 커플끼리 대화할 수 있어요. 죽은 사람들은 따로 대화하고, 영매는 죽은 사람과 이야기할 수 있어요.'),
+      h('h3', null, '🔒 비밀 지키기'),
+      P('내 직업과 능력 결과는 나에게만 보여요. 다른 사람의 직업은 죽어서 공개되거나 능력으로 알아내기 전까지 몰라요.')));
+  } else if (guideTab === 'roles') {
+    const on = st.settings.enabledRoles || [];
+    sheet.append(h('div', { class: 'note' }, '이번 방에서 쓰도록 체크된 직업만 나올 수 있어요. 인원이 적으면 전부 나오지는 않아요. 체크 해제된 직업은 흐리게 표시돼요.'));
+    for (const team of ['mafia', 'citizen', 'neutral']) {
+      sheet.append(h('div', { class: 'teamhead' }, h('span', { style: 'color:' + TEAM_COLOR[team] }, meta.teams[team])));
+      for (const r of meta.roles.filter((x) => x.team === team && x.impl)) {
+        const included = r.fixed || on.includes(r.key);
+        sheet.append(h('div', { class: 'rrow' + (included ? '' : ' off') },
+          h('div', null,
+            h('div', { class: 'rn' }, r.name, st.me && st.me.role === r.key ? h('span', { class: 'mine' }, '내 직업') : null, included ? null : h('span', { class: 'soon' }, '이번 판 제외')),
+            h('div', { class: 'rd' }, r.desc))));
+      }
+    }
+  } else {
+    sheet.append(h('div', { class: 'gp' },
+      h('h3', null, '📝 직업 메모 쓰는 법'),
+      P('게임 중 다른 사람 카드 오른쪽 아래의 ', K('📝'), ' 버튼을 누르면 "이 사람은 무슨 직업일까?"를 적어 둘 수 있어요. 최대 3개까지 고를 수 있고, 카드에 ', K('📝 경찰/의사?'), '처럼 표시돼요.'),
+      P('메모는 ', K('내 화면에만'), ' 저장되고 다른 사람은 볼 수 없어요. 새 게임을 시작하면 지워져요.'),
+      P('직업이 공개된 사람(죽어서 공개)은 메모 대신 진짜 직업이 보여요.'),
+      h('h3', null, '🔍 추리 팁'),
+      P('· 누가 "나 경찰이야"라고 주장하면 그 말이 진짜인지 다른 주장과 비교해 보세요. 경찰을 사칭하는 마피아도 있어요.'),
+      P('· 밤새 아무도 안 죽었다면 의사의 치료, 경호원의 방어 같은 일이 있었는지 생각해 보세요.'),
+      P('· 투표에서 누가 누구를 찍는지 눈여겨보세요. 마피아는 동료를 감싸거나 일부러 외면하기도 해요.'),
+      P('· 능력이 없는 시민도 토론과 투표로 이길 수 있어요. 메모로 의심 가는 사람을 정리해 두면 편해요.')));
   }
 }
 
