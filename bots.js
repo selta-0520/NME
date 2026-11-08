@@ -103,7 +103,7 @@ function pickNight(room, p, opt, mode) {
     }
     const mates = U.alive(room).filter((x) => U.inMafiaChat(x));
     const acc = (c) => mates.reduce((n, t) => n + ((m.acc[c.id] && m.acc[c.id][t.id]) || 0), 0);
-    return best((c) => (m.hunt[c.id] ? 80 : 0) + (L.threat && m.cop[c.id] ? 60 : 0) + (L.threat ? acc(c) * 25 : 0) - (L.threat ? (m.sus[c.id] || 0) * 0.2 : 0));
+    return best((c) => (m.hunt[c.id] ? 80 : 0) + (L.threat && m.cop[c.id] ? 60 : 0) + (L.threat ? acc(c) * 25 : 0) - (L.threat ? (m.sus[c.id] || 0) * 0.2 : 0) - ((m.fail && m.fail[c.id]) || 0) * 100);
   }
   if (role === 'police') return best((c) => (b.checks[c.id] ? -100 : 0) + sus(c));
   if (team === 'mafia') { // 마피아 팀 특수직업: 팀원은 피하고 경찰 행세하는 사람을 노린다
@@ -156,7 +156,9 @@ function botNight(room, p) {
   const id = pickNight(room, p, opt, mode);
   const body = { type: 'night', target: id, mode };
   if (opt.text) body.text = rnd(LINES);
-  if (act(room, p, body) && (p.role === 'police' || p.role === 'spy')) bmem(p).pending = { id, role: p.role };
+  const okAct = act(room, p, body);
+  if (okAct && U.canAttackAsMafia(room, p)) { const mm = bm(room); (mm.tried = mm.tried || {})[room.day] = id; }
+  if (okAct && (p.role === 'police' || p.role === 'spy')) bmem(p).pending = { id, role: p.role };
 }
 
 // ------------------------------------------------------------ 낮
@@ -264,8 +266,13 @@ function schedule(room) {
 
 // 죽은 사람의 직업이 공개되면 거기서 단서를 얻는다 (직업 공개 설정이 켜진 경우에만)
 function afterResolve(room, beforeIds, voteSnap) {
+  const m = bm(room); m.vsus = m.vsus || {}; m.fail = m.fail || {};
+  if (!voteSnap) { // 밤: 마피아가 노렸는데 아무도 죽지 않았다면, 그 대상은 공격이 안 통하는 사람일 수 있다
+    const t = m.tried && m.tried[room.day];
+    const anyDied = beforeIds.some((id) => { const d = U.byId(room, id); return d && !d.alive; });
+    if (t) { if (!anyDied) m.fail[t] = (m.fail[t] || 0) + 1; else m.fail[t] = 0; }
+  }
   if (!room.settings.revealOnDeath) return;
-  const m = bm(room); m.vsus = m.vsus || {};
   for (const id of beforeIds) {
     const d = U.byId(room, id); if (!d || d.alive || !d.role) continue;
     const team = ROLE[d.role].team;

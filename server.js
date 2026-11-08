@@ -13,6 +13,10 @@ const { U } = E;
 const Bots = require('./bots');
 
 const PORT = Number(process.env.PORT) || 3000;
+const QUIET_LIMIT = 6;
+// 어떤 오류가 나도 서버 전체가 꺼지지 않게 한다 (한 방의 오류가 모두의 접속을 끊지 않도록)
+process.on('uncaughtException', (e) => console.error('[오류]', e && e.stack || e));
+process.on('unhandledRejection', (e) => console.error('[오류]', e && e.stack || e));
 const MIN_PLAYERS = 4;
 const MAX_PLAYERS = 50;
 const LIMITS = {
@@ -179,10 +183,11 @@ function setPhase(room, phase) {
   if (sec) {
     room.endsAt = Date.now() + sec * 1000;
     const seq = room.seq;
-    room.timer = setTimeout(() => { if (room.seq === seq) advance(room); }, sec * 1000);
+    room.timer = setTimeout(() => { if (room.seq === seq) safeAdvance(room); }, sec * 1000);
   } else room.endsAt = 0;
   if (phase === 'night') E.startNight(room);
   if (phase === 'day') room.dayAdj = {};
+  if (phase === 'night') room.cycleAlive = alivePlayers(room).length;
   if (phase === 'vote') { room.votes = {}; room.voteActs = {}; }
   broadcastState(room);
   if (phase === 'night' || phase === 'day' || phase === 'vote') Bots.schedule(room);
@@ -191,6 +196,7 @@ function setPhase(room, phase) {
 function startGame(room) {
   Bots.reset(room);
   const skipped = E.assignRoles(room);
+  room.quiet = 0;
   room.day = 1; room.winner = null; room.votes = {}; room.voteActs = {};
   addChat(room, 'sys', '🎭 게임이 시작되었습니다! 직업이 배정되었어요.');
   if (skipped && skipped.length) addChat(room, 'sys', `⚠ 인원이 부족해 필수 직업 중 ${skipped.map(roleName).join(', ')}은(는) 이번 판에 넣지 못했어요.`);
@@ -219,6 +225,13 @@ function endGame(room, w) {
   for (const p of room.players) sendBacklog(room, p);
 }
 
+// 단계 넘기기에서 오류가 나면 기록만 하고, 게임이 멈추지 않도록 다음 단계로 강제 이동을 시도한다
+function safeAdvance(room) {
+  try { advance(room); } catch (e) {
+    console.error('[단계 진행 오류]', e && e.stack || e);
+    try { if (room.phase !== 'lobby' && room.phase !== 'ended') { room.day = room.day || 1; setPhase(room, room.phase === 'night' ? 'day' : room.phase === 'day' ? 'vote' : 'night'); } } catch (e2) { console.error('[복구 실패]', e2 && e2.stack || e2); }
+  }
+}
 function advance(room) {
   if (room.phase === 'night') {
     const before = alivePlayers(room).map((x) => x.id);
@@ -233,7 +246,12 @@ function advance(room) {
     const before = alivePlayers(room).map((x) => x.id), snap = Object.assign({}, room.votes);
     E.resolveVote(room);
     Bots.afterResolve(room, before, snap);
-    const w = E.checkWin(room);
+    let w = E.checkWin(room);
+    // 하루(밤+낮) 동안 아무도 죽지 않은 날이 6번 이어지면, 더 진행할 수 없는 상황으로 보고 무승부 처리
+    if (!w) {
+      room.quiet = alivePlayers(room).length === room.cycleAlive ? (room.quiet || 0) + 1 : 0;
+      if (room.quiet >= QUIET_LIMIT) w = { kind: 'draw', text: `🤝 ${QUIET_LIMIT}일 연속 아무도 죽지 않아 무승부로 끝났습니다.`, ids: [] };
+    } else room.quiet = 0;
     if (w) endGame(room, w);
     else {
       room.day++;
@@ -343,7 +361,7 @@ function handleAction(room, p, b) {
     case 'skip': {
       if (!isHost) fail('방장만 단계를 넘길 수 있어요.');
       if (!['night', 'day', 'vote'].includes(room.phase)) fail('지금은 넘길 수 없어요.');
-      advance(room);
+      safeAdvance(room);
       return;
     }
     case 'reset': {
@@ -378,7 +396,7 @@ function handleAction(room, p, b) {
       room.endsAt = b.dir === 'short' ? Math.max(now + 1000, room.endsAt - 5000) : room.endsAt + 5000;
       clearTimeout(room.timer);
       const seq = room.seq;
-      room.timer = setTimeout(() => { if (room.seq === seq) advance(room); }, Math.max(0, room.endsAt - now));
+      room.timer = setTimeout(() => { if (room.seq === seq) safeAdvance(room); }, Math.max(0, room.endsAt - now));
       const left = Math.max(0, Math.ceil((room.endsAt - now) / 1000));
       addChat(room, 'sys', `${b.dir === 'short' ? '⏩' : '⏪'} ${p.name}님이 아침 시간을 ${Math.round(Math.abs(room.endsAt - before) / 1000)}초 ${b.dir === 'short' ? '줄였어요' : '늘렸어요'}. (남은 시간 ${left}초)`);
       broadcastState(room);
@@ -402,7 +420,7 @@ function handleAction(room, p, b) {
       const seq = room.seq;
       const done = () => alivePlayers(room).filter((x) => E.canVote(room, x)).every((x) => room.votes[x.id]);
       if (done()) {
-        setTimeout(() => { if (room.seq === seq && room.phase === 'vote' && done()) advance(room); }, 1500);
+        setTimeout(() => { if (room.seq === seq && room.phase === 'vote' && done()) safeAdvance(room); }, 1500);
       }
       return;
     }
@@ -520,5 +538,5 @@ setInterval(() => {
 
 module.exports = { server, rooms, advance, startGame, E, createRoom, makePlayer, setPhase, handleAction, viewFor };
 if (require.main === module) {
-  server.listen(PORT, () => console.log(`NME 서버 실행 중: http://localhost:${PORT}`));
+  server.listen(PORT, '0.0.0.0', () => console.log(`NME 서버 실행 중: http://localhost:${PORT}`));
 }
