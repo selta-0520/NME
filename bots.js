@@ -147,6 +147,12 @@ function botNight(room, p) {
   if (!opt) return;
   if (chance(L.skip)) return;
   if (ONCE.has(p.role) && !chance(L.once)) return;
+  if (opt.noTarget) { // 미치광이: 능력을 쓸지 말지
+    const n = U.alive(room).length;
+    const useIt = chance(n >= 8 ? 0.6 : n >= 5 ? 0.4 : n >= 4 ? 0.25 : 0.1);
+    act(room, p, { type: 'night', target: null, mode: useIt ? 'on' : 'off' });
+    return;
+  }
   let mode = opt.mode;
   if (opt.modes) {
     mode = chooseMode(room, p, opt);
@@ -245,6 +251,21 @@ function botVote(room, p) {
 // ------------------------------------------------------------ 단계 시작 시 호출
 function schedule(room) {
   const seq = room.seq, phase = room.phase, L = lv(room);
+  if (phase === 'last') { // 처형된 테러리스트(봇)가 함께 죽을 사람을 고른다
+    const T = U.byId(room, room.lastBoom);
+    if (T && T.bot) {
+      setTimeout(() => {
+        if (room.seq !== seq || !deps.rooms.has(room.code) || room.lastBoom !== T.id) return;
+        try {
+          const cands = U.alive(room).filter((x) => x !== T);
+          let bs = -1e9, bc = null;
+          for (const c of cands) { const s = suspicion(room, T, c, null) + Math.random() * L.noise; if (s > bs) { bs = s; bc = c; } }
+          act(room, T, { type: 'boom', target: bc ? bc.id : null });
+        } catch (e) { console.error('봇 오류', e); }
+      }, 1500 + Math.random() * 4000);
+    }
+    return;
+  }
   const sec = phase === 'night' ? room.settings.nightSec : phase === 'day' ? room.settings.daySec : room.settings.voteSec;
   for (const p of room.players) {
     if (!p.bot || !p.alive) continue;

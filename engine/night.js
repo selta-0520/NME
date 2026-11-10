@@ -8,8 +8,8 @@ function startNight(room) {
   room.night = { acts: {} };
   room.touches = [];
   for (const p of U.alive(room)) {
-    // 암살자: 매일 밤 랜덤 타겟 (접선 전)
-    if (p.role === 'assassin' && !p.contacted) {
+    // 암살자: 2일차 밤부터 매일 밤 랜덤 타겟 (접선 전)
+    if (p.role === 'assassin' && !p.contacted && room.day >= 2) {
       const cand = U.alive(room).filter((x) => x !== p && !U.inMafiaChat(x));
       p.s.target = cand.length ? U.pick(cand).id : null;
       if (p.s.target) U.priv(room, p, `🎯 오늘의 타겟은 ${U.byId(room, p.s.target).name}님입니다. 이 사람이 죽으면 마피아와 접선합니다.`);
@@ -57,9 +57,12 @@ function resolveNight(room) {
   const deaths = [];         // {p, how}
   const revives = [];        // {t, by, type}
   const attacks = [];        // {kind, by, t}
-  const heal = new Set();    // 살려진 사람 id
+  const healBy = {};         // 살려진 사람 id -> 살린 사람들
+  const addHeal = (t, by) => { (healBy[t.id] = healBy[t.id] || []).push(by); };
+  const isHealed = (t, kind) => (healBy[t.id] || []).some((h) => kind !== 'assassin' || h !== t); // 암살자는 상대의 자기 치료를 무시
   const guard = {};          // 보호받는 사람 id -> 경호원
   const nightDeadIds = new Set();
+  const guardNotes = [];     // 경호원이 지키던 사람이 공격받아 죽은 기록
 
   // ---- 1. 실제로 실행되는 행동 모으기
   let list = [];
@@ -70,12 +73,7 @@ function resolveNight(room) {
     if (!t || !opt.targets.includes(t.id)) continue;
     list.push({ p, t, mode: opt.mode || a.mode, text: a.text });
   }
-  // ---- 2. 암살자 능력 무효화
-  const blocked = new Set();
-  for (const x of list) {
-    if (x.p.role === 'assassin' && x.p.contacted) { blocked.add(x.t.id); priv(x.t, '🗡 누군가에 의해 오늘 밤 능력이 무효가 되었습니다.'); U.touch(room, x.p, x.t); }
-  }
-  list = list.filter((x) => !blocked.has(x.p.id) && !(x.p.role === 'assassin'));
+  // ---- 2. (암살자는 접선 뒤 직접 죽이는 능력이라 5번에서 공격으로 처리)
   // ---- 3. 닌자: 대상 맞바꾸기
   const ninja = list.find((x) => x.p.role === 'ninja');
   if (ninja) {
@@ -116,7 +114,7 @@ function resolveNight(room) {
         priv(p, `🔍 조사 결과: ${t.name}님은 ${U.shownRole(t) === 'mafia' ? '마피아입니다.' : '마피아가 아닙니다.'}`);
         U.touch(room, p, t); break;
       case 'ghost':
-        t.s.silenceDay = day; t.s.noVoteDay = day;
+        t.s.silenceDay = day; t.s.noVoteDay = day; p.s.lastScare = { id: t.id, day };
         priv(t, '😨 겁을 먹었습니다. 오늘은 말도 투표도 할 수 없습니다.');
         if (U.isMafiaKnown(t)) U.contact(room, p, t);
         U.touch(room, p, t); break;
@@ -133,7 +131,7 @@ function resolveNight(room) {
         if (t.role === 'beggar') {
           p.s.meetDay = day; t.s.meetDay = day; t.s.met = true;
           priv(p, '💰 그 사람은 거지였습니다! 2일 뒤 둘 다 살아있으면 우승합니다.');
-          priv(t, '🎉 부자를 만났습니다! 이제 말하고 투표할 수 있어요. 2일 뒤 둘 다 살아있으면 우승합니다.');
+          priv(t, '🎉 부자를 만났습니다! 이제 말하고 투표할 수 있고, 투표로 죽을 수도 있어요. 12~17초마다 채팅을 해야 하며 안 하면 "한푼 줍쇼"가 자동으로 전송돼요. 2일 뒤 둘 다 살아있으면 우승합니다.');
         } else priv(p, `💰 ${t.name}님은 거지가 아닙니다.`);
         break;
       case 'medium':
@@ -152,34 +150,39 @@ function resolveNight(room) {
       case 'volunteer': p.s.volPick = t.id; break;
       case 'bodyguard': guard[t.id] = p; U.touch(room, p, t); break;
       case 'doctor':
-        heal.add(t.id); if (t.id === p.id) p.s.lastSelfHeal = day;
+        addHeal(t, p); if (t.id === p.id) p.s.lastSelfHeal = day;
         U.touch(room, p, t); break;
       case 'angel':
         p.s.angelUsed = true; U.touch(room, p, t);
         if (x.mode === 'revive') revives.push({ t, by: p, type: 'angel' });
-        else if (U.teamOf(t) === 'citizen') heal.add(t.id);
+        else if (U.teamOf(t) === 'citizen') addHeal(t, p);
         else priv(p, `😇 ${t.name}님은 시민 팀이 아니어서 소생에 실패했습니다.`);
         break;
       case 'priest':
         p.s.priestUsed = true; revives.push({ t, by: p, type: 'priest' }); break;
       case 'scientist':
         U.touch(room, p, t);
-        if (x.mode === 'heal') { p.s.potionHeal = true; heal.add(t.id); priv(p, `⚗ ${t.name}님에게 살리는 물약을 사용했습니다.`); }
-        else { p.s.potionKill = true; attacks.push({ kind: 'potion', by: p, t }); priv(p, `⚗ ${t.name}님에게 죽이는 물약을 사용했습니다.`); }
+        p.s.potionUsed = x.mode === 'heal' ? 'heal' : 'kill'; // 하나를 쓰면 나머지는 쓸 수 없다
+        if (x.mode === 'heal') { addHeal(t, p); priv(p, `⚗ ${t.name}님에게 살리는 물약을 사용했습니다. (이제 물약을 더 쓸 수 없습니다)`); }
+        else { attacks.push({ kind: 'potion', by: p, t }); priv(p, `⚗ ${t.name}님에게 죽이는 물약을 사용했습니다. (이제 물약을 더 쓸 수 없습니다)`); }
         break;
       case 'destroyer': attacks.push({ kind: 'destroy', by: p, t }); U.touch(room, p, t); break;
+      case 'assassin': attacks.push({ kind: 'assassin', by: p, t }); U.touch(room, p, t); break;
       default: break;
     }
   }
-  // 미치광이의 랜덤 살인
+  // 미치광이: 능력을 쓰기로 한 밤에만, 자신을 포함한 아무나 랜덤으로 죽인다
   for (const p of U.alive(room)) {
-    if (p.role !== 'madman' || p.s.blockNight === day || blocked.has(p.id)) continue;
-    const cand = U.alive(room).filter((x) => x !== p);
-    if (cand.length) { const t = U.pick(cand); attacks.push({ kind: 'madman', by: p, t }); U.touch(room, p, t); }
+    if (p.role !== 'madman') continue;
+    const a = acts[p.id];
+    if (!a || a.mode !== 'on' || !AB.nightOptions(room, p, 'on')) continue; // 안 쓰기로 했거나 유혹당함
+    const t = U.pick(U.alive(room));
+    attacks.push({ kind: 'madman', by: p, t });
+    U.touch(room, p, t);
   }
 
   // ---- 6. 공격 처리 (파괴 → 물약 → 미치광이 → 마피아 순서)
-  const order = { destroy: 0, potion: 1, madman: 2, mafia: 3 };
+  const order = { destroy: 0, potion: 1, madman: 2, mafia: 3, assassin: 4 };
   attacks.sort((a, b) => order[a.kind] - order[b.kind]);
   const kill = (victim, how, by, kind) => {
     victim.alive = false; nightDeadIds.add(victim.id);
@@ -191,7 +194,7 @@ function resolveNight(room) {
       deaths.push({ p: by, how: '테러리스트의 자폭에 휘말려 사망했습니다.' });
     }
   };
-  const HOW = { mafia: '마피아에게 살해당했습니다.', potion: '정체불명의 공격으로 사망했습니다.', madman: '정체불명의 공격으로 사망했습니다.', destroy: '정체불명의 공격으로 사망했습니다.' };
+  const HOW = { mafia: '마피아에게 살해당했습니다.', potion: '정체불명의 공격으로 사망했습니다.', madman: '정체불명의 공격으로 사망했습니다.', destroy: '정체불명의 공격으로 사망했습니다.', assassin: '정체불명의 공격으로 사망했습니다.' };
   let mafiaFailMsg = null;
   for (const at of attacks) {
     let t = at.t;
@@ -204,19 +207,15 @@ function resolveNight(room) {
     if (at.kind !== 'destroy') {
       if (at.kind === 'mafia' && (t.role === 'ghost' || t.role === 'hermit')) fail = 'immune';
       else if (at.kind === 'mafia' && t.role === 'soldier' && !t.s.shieldUsed) { t.s.shieldUsed = true; fail = 'soldier'; }
-      else if (heal.has(t.id)) fail = 'heal';
+      else if (isHealed(t, at.kind)) fail = 'heal';
     }
     if (fail) {
       if (at.kind === 'mafia') mafiaFailMsg = fail === 'heal' ? '🩺 마피아의 습격이 있었지만 누군가가 살려냈습니다!' : '🛡 마피아의 습격이 있었지만 아무도 죽지 않았습니다.';
       continue;
     }
-    const g = at.kind !== 'destroy' ? guard[t.id] : null;
-    if (g && g.alive && g !== t) {
-      priv(g, `🛡 ${t.name}님을 지키다 공격받았습니다. 공격한 사람은 ${at.by.name}님입니다.`);
-      kill(g, '누군가를 지키다 사망했습니다.', at.by, at.kind);
-      continue;
-    }
+    const g = guard[t.id] || guard[at.t.id];
     kill(t, HOW[at.kind], at.by, at.kind);
+    if (g && at.by) guardNotes.push({ g, victim: t, by: at.by });
   }
 
   // ---- 7. 사망 후속 처리
@@ -241,7 +240,7 @@ function resolveNight(room) {
   for (const v of U.alive(room)) {
     if (v.role !== 'volunteer' || !v.s.volPick) continue;
     const t = U.byId(room, v.s.volPick); v.s.volPick = null;
-    if (!t || blocked.has(v.id)) continue;
+    if (!t) continue;
     const touched = room.touches.some((c) => c.from === t.id && c.to === v.id);
     if (touched && ROLE[t.role].team === 'citizen' && t.role !== 'volunteer' && t.role !== 'couple') copyRoleNote(room, v, t.role);
   }
@@ -250,6 +249,10 @@ function resolveNight(room) {
   U.sys(room, `☀️ ${day}일차 아침이 밝았습니다.`);
   if (mafiaFailMsg) U.sys(room, mafiaFailMsg);
   for (const d of deaths) U.io.kill(room, d.p, d.how);
+  for (const gn of guardNotes) {
+    U.sys(room, `🛡 경호원이 지키던 ${gn.victim.name}님이 공격으로 사망했습니다! 공격한 사람은 ${gn.by.name}님입니다.`);
+    priv(gn.g, `🛡 지키던 ${gn.victim.name}님이 사망했습니다. (공격한 ${gn.by.name}님이 모두에게 공개되었습니다)`);
+  }
   for (const t of revived) U.sys(room, `✨ ${t.name}님이 부활했습니다!`);
   if (!deaths.length && !mafiaFailMsg && !revived.length) U.sys(room, '고요한 밤이었습니다. 아무 일도 일어나지 않았습니다.');
 
@@ -262,6 +265,9 @@ function resolveNight(room) {
       if (['couple', 'beggar', 'rich', 'gravedigger', 'joker'].includes(role)) role = 'citizen';
       copyRoleNote(room, g, role);
     }
+  }
+  // 광대 (2일차 아침): 그 전에 죽었다면 아무 일도 일어나지 않는다
+  if (day === 2) {
     const joker = U.alive(room).find((x) => x.role === 'joker');
     if (joker) jokerShuffle(room, joker);
   }

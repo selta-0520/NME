@@ -32,7 +32,7 @@ U.inMafiaChat = (p) => ROLE[p.role].team === 'mafia' && !!p.contacted && p.role 
 // "마피아" 로 인정되는 대상 (접선 판정용)
 U.isMafiaKnown = (p) => ROLE[p.role].team === 'mafia' && (p.role === 'mafia' || !!p.contacted);
 
-// 조사 결과에 보이는 직업 (은둔자는 마피아, 도플갱어는 흉내 낸 직업)
+// 조사 결과에 보이는 직업 (은둔자는 마피아, 사기꾼는 흉내 낸 직업)
 U.shownRole = (p) => {
   const r = p.s.disguise || p.role;
   return r === 'hermit' ? 'mafia' : r;
@@ -42,7 +42,7 @@ U.shownTeam = (p) => ROLE[U.shownRole(p)].team;
 U.priv = (room, p, text) => U.io.priv(room, p, text);
 U.sys = (room, text) => U.io.sys(room, text);
 
-// 마피아가 직접 공격할 수 있는 사람들 (마피아 + 마피아가 모두 죽은 뒤의 접선한 도플갱어)
+// 마피아가 직접 공격할 수 있는 사람들 (마피아 + 마피아가 모두 죽은 뒤의 접선한 사기꾼)
 U.canAttackAsMafia = (room, p) => {
   if (!p.alive) return false;
   if (p.role === 'mafia') return true;

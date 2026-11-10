@@ -274,6 +274,7 @@ const PHASE_TITLE = {
   night: () => `🌙 ${st.day}일차 밤`,
   day: () => `☀️ ${st.day}일차 낮 · 토론`,
   vote: () => `🗳 ${st.day}일차 투표`,
+  last: () => `💣 ${st.day}일차 · 테러리스트의 마지막 선택`,
   ended: () => '🏁 게임 종료',
 };
 const isHost = () => st && st.hostId === st.meId;
@@ -283,7 +284,7 @@ const pById = (id) => st.players.find((p) => p.id === id);
 function render() {
   if (!st || !meta) return;
   $('#home').hidden = true; $('#room').hidden = false;
-  document.body.className = st.phase === 'night' ? 'night' : (st.phase === 'day' || st.phase === 'vote') ? 'day' : '';
+  document.body.className = st.phase === 'night' ? 'night' : (st.phase === 'day' || st.phase === 'vote' || st.phase === 'last') ? 'day' : '';
   if (st.phase === 'lobby') clearMemo();
   renderTop(); renderMain();
   const ci = chatInfo();
@@ -293,11 +294,14 @@ function render() {
   if (settingsOpen) syncSettings();
 }
 
+function begLeft() { return Math.max(0, Math.ceil((st.begAt - (Date.now() + offset)) / 1000)); }
 function remaining() { return Math.max(0, Math.ceil((st.endsAt - (Date.now() + offset)) / 1000)); }
 function fmt(s) { return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; }
 setInterval(() => {
   const el = $('#timer');
   if (el && st && st.endsAt) el.textContent = fmt(remaining());
+  const bc = $('#begcd');
+  if (bc && st && st.begAt) bc.textContent = String(begLeft());
 }, 250);
 
 function renderTop() {
@@ -311,8 +315,11 @@ function renderTop() {
 let uiMode = 'vote', lastPhaseKey = '', progDraft = null;
 function phaseKey() { return st.phase + ':' + st.day; }
 
+let boomPick = null; // 처형된 테러리스트가 고른 사람 (확정 전)
 function targetable(q) {
-  const me = st.me; if (!me || !me.alive) return false;
+  const me = st.me;
+  if (st.phase === 'last') return !!(me && me.boom && me.boom.targets.includes(q.id));
+  if (!me || !me.alive) return false;
   if (st.phase === 'night') return !!(me.night && me.night.targets.includes(q.id));
   if (st.phase === 'vote') {
     if (uiMode === 'ability' && me.voteAbility) return me.voteAbility.targets.includes(q.id);
@@ -322,6 +329,7 @@ function targetable(q) {
 }
 function selectedId() {
   const me = st.me; if (!me) return null;
+  if (st.phase === 'last') return boomPick;
   if (st.phase === 'night') return me.night ? me.night.pick : null;
   if (st.phase === 'vote') return (uiMode === 'ability' && me.voteAbility) ? me.voteAbility.pick : me.vote;
   return null;
@@ -329,6 +337,7 @@ function selectedId() {
 function progText() { const el = $('#progtext'); return el ? el.value : undefined; }
 function clickPlayer(q) {
   if (!targetable(q)) return;
+  if (st.phase === 'last') { boomPick = boomPick === q.id ? null : q.id; render(); return; }
   const target = selectedId() === q.id ? null : q.id;
   if (st.phase === 'night') {
     const body = { target, mode: st.me.night.mode };
@@ -341,10 +350,11 @@ function clickPlayer(q) {
 function hintText() {
   const me = st.me;
   if (st.phase === 'ended') return '';
+  if (st.phase === 'last') return me.boom ? '💣 처형되었어요! 함께 죽을 사람을 골라 확정하세요. (고르지 않으면 아무도 죽지 않아요)' : '💣 처형된 테러리스트가 함께 죽을 사람을 고르는 중이에요…';
   if (!me.alive) return '💀 당신은 죽었습니다. 죽은 사람끼리 대화할 수 있어요. 게임은 계속 지켜볼 수 있어요.';
   if (st.phase === 'night') {
     const extra = me.chat && me.chat.ch ? ` ${me.chat.label} 가능 — 아래 채팅을 이용하세요.` : '';
-    if (me.night) return `${me.night.label}: 카드를 눌러 선택하세요. (다시 누르면 취소)` + extra;
+    if (me.night) return (me.night.noTarget ? `${me.night.label} 아래 버튼으로 골라요.` : `${me.night.label}: 카드를 눌러 선택하세요. (다시 누르면 취소)`) + extra;
     if (me.info.some((l) => l.includes('유혹'))) return '💋 오늘 밤은 능력을 쓸 수 없어요.' + extra;
     return '🌙 밤입니다. 지금 쓸 수 있는 능력이 없어요. 아침을 기다려 주세요.' + extra;
   }
@@ -400,6 +410,10 @@ function abilityPanel() {
     box.append(h('div', { class: 'row', style: 'margin-top:8px' }, inp,
       h('button', { class: 'ghost', onclick: () => act('night', { target: n.pick, mode: n.mode, text: inp.value }) }, '저장')));
   }
+  if (n.noTarget) {
+    box.append(h('div', { class: 'hint', style: 'margin-top:6px' }, n.mode === 'on' ? '✔ 오늘 밤 능력을 사용합니다. (랜덤으로 아무나 죽어요, 나도 포함)' : '오늘 밤은 능력을 사용하지 않아요.'));
+    return box;
+  }
   const picked = n.pick ? pById(n.pick) : null;
   box.append(h('div', { class: 'hint', style: 'margin-top:6px' }, picked ? `✔ 선택: ${picked.name}` : '아직 선택하지 않았어요.'));
   return box;
@@ -410,7 +424,7 @@ function renderMain() {
   const main = $('#main'); main.innerHTML = '';
   if (st.phase === 'lobby') return renderLobby(main);
   const me = st.me;
-  if (lastPhaseKey !== phaseKey()) { lastPhaseKey = phaseKey(); uiMode = 'vote'; progDraft = null; }
+  if (lastPhaseKey !== phaseKey()) { lastPhaseKey = phaseKey(); uiMode = 'vote'; progDraft = null; boomPick = null; }
   if (!me.voteAbility) uiMode = 'vote';
 
   if (st.phase === 'ended') {
@@ -438,6 +452,22 @@ function renderMain() {
     }
   }
 
+  if (st.phase === 'last') {
+    main.append(h('div', { class: 'card banner' }, `💣 ${st.last ? st.last.name : '테러리스트'}님이 함께 죽을 사람을 고르는 중…`, h('span', { class: 'timer', id: 'timer', style: 'margin-left:8px' }, fmt(remaining()))));
+    if (me.boom) {
+      const p = boomPick ? pById(boomPick) : null;
+      main.append(h('div', { class: 'hint' }, p ? `✔ 선택: ${p.name} (다시 누르면 취소)` : '카드를 눌러 함께 죽을 사람을 고르세요.'),
+        h('div', { class: 'actions' },
+          h('button', { disabled: !p, onclick: () => { const t = boomPick; boomPick = null; act('boom', { target: t }); } }, '💣 이 사람과 함께 간다'),
+          h('button', { class: 'ghost', onclick: () => { boomPick = null; act('boom', { target: null }); } }, '아무도 데려가지 않기')));
+    }
+  }
+  if ((st.phase === 'day' || st.phase === 'vote') && st.begAt && me.alive) {
+    main.append(h('div', { class: 'card' },
+      h('div', { class: 'albl', style: 'font-weight:700' }, '💰 거지의 채팅 카운트다운'),
+      h('div', { class: 'hint', style: 'margin-top:4px' }, '아래 채팅을 치면 카운트다운이 다시 시작돼요. 0이 되면 "한푼 줍쇼"가 자동으로 전송돼요.'),
+      h('div', { class: 'timer', id: 'begcd', style: 'font-size:28px;margin-top:6px' }, String(begLeft()))));
+  }
   if (st.phase === 'day' && me.alive) {
     const used = st.dayAdj;
     main.append(h('div', { class: 'card' },
@@ -448,7 +478,7 @@ function renderMain() {
       h('div', { class: 'hint', style: 'margin-top:6px' }, used ? `오늘은 ${used === 'short' ? '줄이기' : '늘리기'}를 썼어요. (아침마다 한 번만 쓸 수 있어요)` : '둘 중 하나만, 아침마다 한 번 쓸 수 있어요. 쓰면 모두에게 알려져요.')));
   }
   const grid = h('div', { class: 'grid' });
-  const clickable = (st.phase === 'night' || st.phase === 'vote');
+  const clickable = (st.phase === 'night' || st.phase === 'vote' || st.phase === 'last');
   for (const q of st.players) grid.append(playerCard(q, { clickable }));
   main.append(grid);
 
@@ -513,13 +543,21 @@ function numField(key, label, unit) {
     h('input', { type: 'number', 'data-key': key, min: lo, max: hi, onchange: (e) => sendPatch({ [key]: Number(e.target.value) }) }));
 }
 function sendPatch(patch) { act('settings', { patch }); }
+// 거지와 부자는 "거지 & 부자" 한 묶음: 한 번 고르면 둘이 같이 선택돼요
+const withPair = (keys) => keys.flatMap((k) => (k === 'beggar' ? ['beggar', 'rich'] : [k]));
 function rolePatch() {
   const on = [...document.querySelectorAll('#sheet input[data-role]')].filter((c) => c.checked).map((c) => c.getAttribute('data-role'));
-  sendPatch({ enabledRoles: on });
+  sendPatch({ enabledRoles: withPair(on) });
 }
 function forcedPatch() {
   const on = [...document.querySelectorAll('#sheet input[data-forced]')].filter((c) => c.checked).map((c) => c.getAttribute('data-forced'));
-  sendPatch({ forcedRoles: on });
+  sendPatch({ forcedRoles: withPair(on) });
+}
+const isPairRich = (r) => r.key === 'rich';
+function roleTitle(r) { return r.key === 'beggar' ? '거지 & 부자' : r.name; }
+function roleDescEls(r, cls) {
+  if (r.key !== 'beggar') return [h('div', { class: cls }, r.desc)];
+  return [h('div', { class: cls }, '🙏 거지: ' + r.desc), h('div', { class: cls, style: 'margin-top:4px' }, '💰 부자: ' + ROLE.rich.desc)];
 }
 function buildSettings() {
   const sheet = $('#sheet'); sheet.innerHTML = '';
@@ -546,11 +584,11 @@ function buildSettings() {
     h('label', { class: 'field' }, h('span', null, '죽으면 직업 공개'),
       h('input', { type: 'checkbox', 'data-key': 'revealOnDeath', style: 'width:20px;height:20px', onchange: (e) => sendPatch({ revealOnDeath: e.target.checked }) })),
     h('h3', null, '🎭 사용할 직업'),
-    h('div', { class: 'note' }, '체크한 직업만 게임에 나와요. 커플은 2명이 함께, 거지와 부자는 둘 다 체크해야 함께 나와요. 인원이 적으면 모든 직업이 나오지는 않아요.'),
+    h('div', { class: 'note' }, '체크한 직업만 게임에 나와요. 커플은 2명이 함께, "거지 & 부자"는 한 번 체크하면 둘이 함께 나와요. 인원이 적으면 모든 직업이 나오지는 않아요.'),
     h('div', { class: 'note', style: 'margin-top:4px' }, '⭐ "필수 등장"을 켜면 그 직업은 팀 최대 인원을 넘더라도 무조건 나와요. (인원이 모자라면 못 넣을 수 있어요. 거지·부자는 함께 켜져요)'));
 
   for (const team of ['mafia', 'citizen', 'neutral']) {
-    const roles = meta.roles.filter((r) => r.team === team);
+    const roles = meta.roles.filter((r) => r.team === team && !isPairRich(r));
     const toggleable = roles.filter((r) => r.impl && !r.fixed);
     const head = h('div', { class: 'teamhead' }, h('span', { style: 'color:' + TEAM_COLOR[team] }, meta.teams[team]));
     if (toggleable.length) {
@@ -566,8 +604,8 @@ function buildSettings() {
       const fc = h('input', { type: 'checkbox', 'data-forced': r.key, disabled: !usable || !host, onchange: forcedPatch });
       sheet.append(h('div', { class: 'rrow' + (r.impl ? '' : ' off') }, cb,
         h('div', { class: 'grow' },
-          h('div', { class: 'rn' }, r.name, r.fixed ? h('span', { class: 'soon' }, '기본') : null, r.impl ? null : h('span', { class: 'soon' }, '준비 중')),
-          h('div', { class: 'rd' }, r.desc),
+          h('div', { class: 'rn' }, roleTitle(r), r.fixed ? h('span', { class: 'soon' }, '기본') : null, r.impl ? null : h('span', { class: 'soon' }, '준비 중')),
+          ...roleDescEls(r, 'rd'),
           usable ? h('label', { class: 'forced' }, fc, '⭐ 필수 등장') : null)));
     }
   }
@@ -661,6 +699,7 @@ function buildGuide() {
       P(K('밤'), ': 능력이 있는 직업은 카드를 눌러 대상을 골라요. 마피아는 팀끼리 한 명을 정해 죽여요.'),
       P(K('아침'), ': 밤에 일어난 일이 알려지고 자유롭게 토론해요.'),
       P(K('투표'), ': 처형할 사람을 골라요. 최다 득표자가 ', K('한 명일 때만'), ' 처형되고, 동률이면 아무도 처형되지 않아요. 기권도 가능해요. 방 설정에 따라 자기 자신에게도 투표할 수 있어요. 투표할 수 있는 모두가 투표하면 바로 개표해요.'),
+      P(K('테러리스트'), '가 투표로 처형되면 잠깐(15초) 동안 함께 죽을 사람을 고를 수 있어요.'),
       P(K('아침 시간 조절'), ': 살아 있는 사람은 아침마다 한 번, "5초 줄이기"와 "5초 늘리기" 중 하나를 쓸 수 있어요. 쓰면 모두에게 알려져요.'),
       h('h3', null, '🏆 승리 조건'),
       P(K('시민 팀'), ': 마피아 팀과 중립 팀이 모두 사라지면 승리.'),
@@ -675,12 +714,13 @@ function buildGuide() {
     sheet.append(h('div', { class: 'note' }, '이번 방에서 쓰도록 체크된 직업만 나올 수 있어요. 인원이 적으면 전부 나오지는 않아요. 체크 해제된 직업은 흐리게 표시돼요.'));
     for (const team of ['mafia', 'citizen', 'neutral']) {
       sheet.append(h('div', { class: 'teamhead' }, h('span', { style: 'color:' + TEAM_COLOR[team] }, meta.teams[team])));
-      for (const r of meta.roles.filter((x) => x.team === team && x.impl)) {
+      for (const r of meta.roles.filter((x) => x.team === team && x.impl && !isPairRich(x))) {
         const included = r.fixed || on.includes(r.key);
+        const mine = st.me && (st.me.role === r.key || (r.key === 'beggar' && st.me.role === 'rich'));
         sheet.append(h('div', { class: 'rrow' + (included ? '' : ' off') },
           h('div', null,
-            h('div', { class: 'rn' }, r.name, st.me && st.me.role === r.key ? h('span', { class: 'mine' }, '내 직업') : null, included ? null : h('span', { class: 'soon' }, '이번 판 제외')),
-            h('div', { class: 'rd' }, r.desc))));
+            h('div', { class: 'rn' }, roleTitle(r), mine ? h('span', { class: 'mine' }, '내 직업') : null, included ? null : h('span', { class: 'soon' }, '이번 판 제외')),
+            ...roleDescEls(r, 'rd'))));
       }
     }
   } else {

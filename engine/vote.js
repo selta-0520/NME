@@ -37,10 +37,7 @@ function resolveVote(room) {
     else if (T.role === 'fugitive' && !T.s.escaped) { T.s.escaped = true; U.sys(room, `🏃 ${T.name}님이 처형을 피해 도망쳤습니다! (이제 투표할 수 없습니다)`); }
     else {
       U.io.kill(room, T, '투표로 처형되었습니다.');
-      if (T.role === 'terrorist') {
-        const a = room.voteActs[T.id]; const victim = a && U.byId(room, a.target);
-        if (victim && victim.alive) U.io.kill(room, victim, '테러리스트의 자폭에 휘말려 사망했습니다.');
-      }
+      if (T.role === 'terrorist') { room.lastBoom = T.id; room.lastPick = null; } // 서버가 '마지막 선택' 시간을 열어 준다
     }
   } else {
     U.sys(room, entries.length ? '⚖️ 동률이라 아무도 처형되지 않았습니다.' : '⚖️ 아무도 처형되지 않았습니다.');
@@ -91,6 +88,15 @@ function resolveVote(room) {
 //  시민 팀: 마피아 팀과 중립 팀이 모두 사라지면 승
 //  마피아 팀: 시민 팀+중립 팀 인원이 마피아 팀 인원 이하가 되면 승
 //  중립 팀: 자신을 제외한 모두가 사라지면 승 (거지·부자·혁명가는 각자의 추가 조건이 있음)
+// 처형된 테러리스트가 고른 사람과 함께 자폭 (고르지 않으면 아무도 죽지 않는다)
+function resolveBoom(room, targetId) {
+  const T = U.byId(room, room.lastBoom);
+  room.lastBoom = null; room.lastPick = null;
+  const victim = targetId ? U.byId(room, targetId) : null;
+  if (!T || !victim || !victim.alive || victim === T) { U.sys(room, '💣 테러리스트는 아무도 데려가지 않았습니다.'); return; }
+  U.io.kill(room, victim, '테러리스트의 자폭에 휘말려 사망했습니다.');
+}
+
 function checkWin(room) {
   if (room.pendingWin) { const w = room.pendingWin; room.pendingWin = null; return w; }
   const alive = U.alive(room);
@@ -114,4 +120,4 @@ function checkWin(room) {
   return null;
 }
 
-module.exports = { resolveVote, checkWin, weight };
+module.exports = { resolveVote, resolveBoom, checkWin, weight };

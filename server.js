@@ -14,6 +14,7 @@ const Bots = require('./bots');
 
 const PORT = Number(process.env.PORT) || 3000;
 const QUIET_LIMIT = 6;
+const LAST_SEC = 15; // 처형된 테러리스트가 함께 죽을 사람을 고르는 시간
 // 어떤 오류가 나도 서버 전체가 꺼지지 않게 한다 (한 방의 오류가 모두의 접속을 끊지 않도록)
 process.on('uncaughtException', (e) => console.error('[오류]', e && e.stack || e));
 process.on('unhandledRejection', (e) => console.error('[오류]', e && e.stack || e));
@@ -65,19 +66,22 @@ function applySettings(s, patch) {
   if (Bots.LEVEL_KEYS.includes(patch.botLevel)) s.botLevel = patch.botLevel;
   if (patch.selfVote !== undefined) s.selfVote = !!patch.selfVote;
   const ok = new Set(ROLES.filter((r) => !r.fixed).map((r) => r.key));
+  const clean = (l) => [...new Set(l)].filter((k) => ok.has(k));
+  const prevEn = s.enabledRoles.slice(), prevFo = s.forcedRoles.slice();
   const hasEnabledPatch = Array.isArray(patch.enabledRoles), hasForcedPatch = Array.isArray(patch.forcedRoles);
-  if (hasEnabledPatch) s.enabledRoles = [...new Set(patch.enabledRoles)].filter((k) => ok.has(k));
+  if (hasEnabledPatch) s.enabledRoles = fixPair(clean(patch.enabledRoles), prevEn);
   if (hasForcedPatch) {
-    s.forcedRoles = [...new Set(patch.forcedRoles)].filter((k) => ok.has(k));
+    s.forcedRoles = fixPair(clean(patch.forcedRoles), prevFo);
     for (const k of s.forcedRoles) if (!s.enabledRoles.includes(k)) s.enabledRoles.push(k); // 필수 지정하면 자동으로 사용 설정
   } else if (hasEnabledPatch) s.forcedRoles = s.forcedRoles.filter((k) => s.enabledRoles.includes(k));
-  // 거지·부자는 항상 함께 (필수/사용 모두)
-  const pairKeys = ['beggar', 'rich'];
-  const fo = s.forcedRoles, en = s.enabledRoles;
-  if (pairKeys.some((k) => fo.includes(k)) && !pairKeys.every((k) => fo.includes(k))) {
-    if (hasForcedPatch) { for (const k of pairKeys) { if (!fo.includes(k)) fo.push(k); if (!en.includes(k)) en.push(k); } }
-    else s.forcedRoles = fo.filter((k) => !pairKeys.includes(k));
-  }
+}
+// 거지와 부자는 "거지 & 부자" 한 묶음: 한쪽만 바뀌어 오면 이전 상태를 보고 둘 다 켜거나 둘 다 끈다
+function fixPair(list, prev) {
+  const b = list.includes('beggar'), r = list.includes('rich');
+  if (b === r) return list;
+  const base = list.filter((k) => k !== 'beggar' && k !== 'rich');
+  const prevBoth = prev.includes('beggar') && prev.includes('rich');
+  return prevBoth ? base : [...base, 'beggar', 'rich'];
 }
 
 // ---------------------------------------------------------------- 방
@@ -155,6 +159,8 @@ function viewFor(room, p) {
   if (inGame) {
     v.me = E.meView(room, p);
     if (room.phase === 'day') v.dayAdj = (room.dayAdj && room.dayAdj[p.id]) || null;
+    if (room.phase === 'last' && room.lastBoom) { const t = byId(room, room.lastBoom); v.last = { terrorist: room.lastBoom, name: t ? t.name : '' }; }
+    if (p.alive && p.role === 'beggar' && p.s.met && room.begAt && (room.phase === 'day' || room.phase === 'vote')) v.begAt = room.begAt;
     if (room.phase === 'vote') {
       const tally = {}; let skip = 0;
       for (const [vid, t] of Object.entries(room.votes)) {
@@ -169,6 +175,31 @@ function viewFor(room, p) {
   }
   return v;
 }
+// ---------------------------------------------------------------- 거지: 부자를 만난 뒤 12~17초마다 채팅해야 함
+const BEG_MIN = 12000, BEG_MAX = 17000;
+function clearBeg(room) { clearTimeout(room.begTimer); room.begTimer = null; room.begAt = 0; }
+function activeBeggar(room) { // 지금 채팅할 수 있는 만난 거지
+  if (room.phase !== 'day' && room.phase !== 'vote') return null;
+  const b = room.players.find((x) => x.alive && x.role === 'beggar' && x.s.met);
+  return b && E.chatInfo(room, b).ch === 'all' ? b : null;
+}
+function scheduleBeg(room) {
+  clearBeg(room);
+  const b = activeBeggar(room);
+  if (!b) return;
+  const ms = BEG_MIN + Math.floor(Math.random() * (BEG_MAX - BEG_MIN + 1));
+  room.begAt = Date.now() + ms;
+  const seq = room.seq;
+  room.begTimer = setTimeout(() => {
+    if (room.seq !== seq || !rooms.has(room.code)) return;
+    const bb = activeBeggar(room);
+    if (!bb) { room.begAt = 0; return; }
+    addChat(room, 'all', '한푼 줍쇼', bb); // 거지가 말이 없으면 대신 자동으로 말한다
+    scheduleBeg(room);
+  }, ms);
+  sendToPlayer(b, 'state', viewFor(room, b)); // 거지에게 새 카운트다운을 알림
+}
+
 function broadcastState(room) {
   for (const p of room.players) if (p.conns.size) sendToPlayer(p, 'state', viewFor(room, p));
 }
@@ -179,7 +210,7 @@ function setPhase(room, phase) {
   room.phase = phase;
   room.seq++;
   const s = room.settings;
-  const sec = phase === 'night' ? s.nightSec : phase === 'day' ? s.daySec : phase === 'vote' ? s.voteSec : 0;
+  const sec = phase === 'night' ? s.nightSec : phase === 'day' ? s.daySec : phase === 'vote' ? s.voteSec : phase === 'last' ? LAST_SEC : 0;
   if (sec) {
     room.endsAt = Date.now() + sec * 1000;
     const seq = room.seq;
@@ -190,11 +221,13 @@ function setPhase(room, phase) {
   if (phase === 'night') room.cycleAlive = alivePlayers(room).length;
   if (phase === 'vote') { room.votes = {}; room.voteActs = {}; }
   broadcastState(room);
-  if (phase === 'night' || phase === 'day' || phase === 'vote') Bots.schedule(room);
+  if (phase === 'day' || phase === 'vote') scheduleBeg(room); else clearBeg(room);
+  if (phase === 'night' || phase === 'day' || phase === 'vote' || phase === 'last') Bots.schedule(room);
 }
 
 function startGame(room) {
   Bots.reset(room);
+  clearBeg(room); room.lastBoom = null; room.lastPick = null;
   const skipped = E.assignRoles(room);
   room.quiet = 0;
   room.day = 1; room.winner = null; room.votes = {}; room.voteActs = {};
@@ -229,6 +262,7 @@ function endGame(room, w) {
 function safeAdvance(room) {
   try { advance(room); } catch (e) {
     console.error('[단계 진행 오류]', e && e.stack || e);
+    room.lastBoom = null;
     try { if (room.phase !== 'lobby' && room.phase !== 'ended') { room.day = room.day || 1; setPhase(room, room.phase === 'night' ? 'day' : room.phase === 'day' ? 'vote' : 'night'); } } catch (e2) { console.error('[복구 실패]', e2 && e2.stack || e2); }
   }
 }
@@ -246,23 +280,39 @@ function advance(room) {
     const before = alivePlayers(room).map((x) => x.id), snap = Object.assign({}, room.votes);
     E.resolveVote(room);
     Bots.afterResolve(room, before, snap);
-    let w = E.checkWin(room);
-    // 하루(밤+낮) 동안 아무도 죽지 않은 날이 6번 이어지면, 더 진행할 수 없는 상황으로 보고 무승부 처리
-    if (!w) {
-      room.quiet = alivePlayers(room).length === room.cycleAlive ? (room.quiet || 0) + 1 : 0;
-      if (room.quiet >= QUIET_LIMIT) w = { kind: 'draw', text: `🤝 ${QUIET_LIMIT}일 연속 아무도 죽지 않아 무승부로 끝났습니다.`, ids: [] };
-    } else room.quiet = 0;
-    if (w) endGame(room, w);
-    else {
-      room.day++;
-      addChat(room, 'sys', `🌙 ${room.day}일차 밤이 되었습니다.`);
-      setPhase(room, 'night');
+    if (room.lastBoom && alivePlayers(room).length) { // 처형된 테러리스트가 함께 죽을 사람을 고르는 시간
+      addChat(room, 'sys', '💣 처형된 테러리스트가 함께 죽을 사람을 고르고 있습니다…');
+      setPhase(room, 'last');
+      return;
     }
+    room.lastBoom = null;
+    afterVote(room);
+  } else if (room.phase === 'last') {
+    const before = alivePlayers(room).map((x) => x.id);
+    E.resolveBoom(room, room.lastPick || null);
+    Bots.afterResolve(room, before, {});
+    afterVote(room);
+  }
+}
+
+// 투표(와 테러리스트의 마지막 선택)가 끝난 뒤: 승패 판정 → 다음 밤
+function afterVote(room) {
+  let w = E.checkWin(room);
+  // 하루(밤+낮) 동안 아무도 죽지 않은 날이 6번 이어지면, 더 진행할 수 없는 상황으로 보고 무승부 처리
+  if (!w) {
+    room.quiet = alivePlayers(room).length === room.cycleAlive ? (room.quiet || 0) + 1 : 0;
+    if (room.quiet >= QUIET_LIMIT) w = { kind: 'draw', text: `🤝 ${QUIET_LIMIT}일 연속 아무도 죽지 않아 무승부로 끝났습니다.`, ids: [] };
+  } else room.quiet = 0;
+  if (w) endGame(room, w);
+  else {
+    room.day++;
+    addChat(room, 'sys', `🌙 ${room.day}일차 밤이 되었습니다.`);
+    setPhase(room, 'night');
   }
 }
 
 function resetToLobby(room) {
-  clearTimeout(room.timer);
+  clearTimeout(room.timer); clearBeg(room); room.lastBoom = null; room.lastPick = null;
   Bots.reset(room);
   room.phase = 'lobby'; room.day = 0; room.winner = null; room.night = null; room.votes = {}; room.voteActs = {};
   room.touches = []; room.pendingWin = null; room.endsAt = 0; room.chat = []; room.seq++;
@@ -282,7 +332,7 @@ function removePlayer(room, p) {
   room.players = room.players.filter((x) => x !== p);
   for (const res of p.conns) { sse(res, 'kicked', {}); try { res.end(); } catch (e) { /* */ } }
   p.conns.clear();
-  if (!room.players.some((x) => !x.bot)) { clearTimeout(room.timer); rooms.delete(room.code); return; }
+  if (!room.players.some((x) => !x.bot)) { clearTimeout(room.timer); clearBeg(room); rooms.delete(room.code); return; }
   if (room.hostId === p.id) {
     const next = room.players.find((x) => !x.bot && x.conns.size) || room.players.find((x) => !x.bot);
     room.hostId = next.id;
@@ -321,6 +371,15 @@ function handleAction(room, p, b) {
       const info = E.chatInfo(room, p);
       if (!info.ch) fail(info.label.replace(/^\S+\s/, ''));
       addChat(room, info.ch, text, p);
+      if (p.role === 'beggar' && p.s.met && p.alive && info.ch === 'all') scheduleBeg(room); // 거지가 말했으니 카운트다운 새로 시작
+      return;
+    }
+    case 'boom': {
+      if (room.phase !== 'last' || room.lastBoom !== p.id) fail('지금은 선택할 수 없어요.');
+      const t = b.target ? byId(room, b.target) : null;
+      if (b.target && (!t || !t.alive || t === p)) fail('그 사람은 고를 수 없어요.');
+      room.lastPick = t ? t.id : null;
+      safeAdvance(room);
       return;
     }
     case 'settings': {
@@ -532,7 +591,7 @@ setInterval(() => {
   const now = Date.now();
   for (const [code, room] of rooms) {
     const anyone = room.players.some((p) => p.conns.size);
-    if (!anyone && now - room.lastActive > 30 * 60 * 1000) { clearTimeout(room.timer); rooms.delete(code); }
+    if (!anyone && now - room.lastActive > 30 * 60 * 1000) { clearTimeout(room.timer); clearBeg(room); rooms.delete(code); }
   }
 }, 5 * 60 * 1000).unref();
 
