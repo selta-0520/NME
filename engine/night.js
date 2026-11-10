@@ -36,10 +36,12 @@ function copyRoleNote(room, p, role) {
 function jokerShuffle(room, joker) {
   const newRole = U.pick(['citizen', 'mafia']);
   const list = U.alive(room);
+  const before = list.map((p) => `${p.name}(${U.roleName(p.role)})`); // 섞이기 전 직업
   const pool = U.shuffle(list.map((p) => (p === joker ? newRole : p.role)));
   list.forEach((p, i) => { U.setRole(room, p, pool[i], true); });
   for (const p of room.players) { p.s.known = {}; }
   U.sys(room, '🃏 광대의 장난으로 살아있는 모든 사람의 직업이 뒤섞였습니다! 자신의 직업을 다시 확인하세요.');
+  if (room.settings.jokerReveal) U.sys(room, `📜 섞이기 전의 원래 직업: ${before.join(', ')}`);
   for (const p of list) {
     U.priv(room, p, `🎭 새 직업: ${U.roleName(p.role)} — ${ROLE[p.role].desc}`);
     if (U.inMafiaChat(p)) {
@@ -136,7 +138,9 @@ function resolveNight(room) {
         break;
       case 'medium':
         priv(p, `🔮 성불 결과: ${t.name}님의 직업은 "${U.roleName(t.role)}"였습니다. (이제 ${t.name}님은 말할 수 없습니다)`);
-        t.exorcised = true; break;
+        t.exorcised = true;
+        priv(t, '👼 영매에게 성불당했습니다. (이제 말할 수 없습니다)');
+        break;
       case 'detective': p.s.detA = t.id; U.touch(room, p, t); break;
       case 'reporter':
         p.s.reportUsed = true; p.s.report = { target: t.id, day: day + 1 };

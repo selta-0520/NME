@@ -92,6 +92,11 @@
   .rrow .rn{font-weight:700}
   .rrow .rd{font-size:12.5px;color:var(--dim);line-height:1.45;margin-top:2px}
   .rrow.off{opacity:.45}
+  .rrow .cnts{display:flex;gap:14px;flex-wrap:wrap;align-items:center;margin-top:6px;font-size:12.5px;color:var(--dim)}
+  .step{display:inline-flex;align-items:center;gap:4px}
+  .step button{padding:2px 9px;min-width:30px;font-size:16px;line-height:1.2}
+  .step b{display:inline-block;min-width:22px;text-align:center;color:var(--text,#fff);font-size:14px}
+  .warnbox{background:#ffb4001a;border:1px solid #ffb40066;border-radius:10px;padding:8px 10px;margin:8px 0;font-size:12.5px;line-height:1.5}
   .rrow .forced{display:flex;align-items:center;gap:6px;font-size:12.5px;color:var(--neutral);margin-top:5px}
   .rrow .forced input{margin:0;width:16px;height:16px}
   .soon{font-size:11px;background:var(--line);color:var(--dim);padding:1px 6px;border-radius:6px;margin-left:6px}
@@ -473,8 +478,8 @@ function renderMain() {
     main.append(h('div', { class: 'card' },
       h('div', { class: 'albl', style: 'font-weight:700;margin-bottom:6px' }, '⏱ 아침 시간 조절'),
       h('div', { class: 'seg' },
-        h('button', { class: used === 'short' ? '' : 'ghost', disabled: !!used, onclick: () => act('timeadj', { dir: 'short' }) }, '⏩ 5초 줄이기'),
-        h('button', { class: used === 'long' ? '' : 'ghost', disabled: !!used, onclick: () => act('timeadj', { dir: 'long' }) }, '⏪ 5초 늘리기')),
+        h('button', { class: used === 'short' ? '' : 'ghost', disabled: !!used, onclick: () => act('timeadj', { dir: 'short' }) }, '⏩ 10초 줄이기'),
+        h('button', { class: used === 'long' ? '' : 'ghost', disabled: !!used, onclick: () => act('timeadj', { dir: 'long' }) }, '⏪ 10초 늘리기')),
       h('div', { class: 'hint', style: 'margin-top:6px' }, used ? `오늘은 ${used === 'short' ? '줄이기' : '늘리기'}를 썼어요. (아침마다 한 번만 쓸 수 있어요)` : '둘 중 하나만, 아침마다 한 번 쓸 수 있어요. 쓰면 모두에게 알려져요.')));
   }
   const grid = h('div', { class: 'grid' });
@@ -554,6 +559,19 @@ function forcedPatch() {
   sendPatch({ forcedRoles: withPair(on) });
 }
 const isPairRich = (r) => r.key === 'rich';
+function stepper(key, kind) {
+  const cap = meta.caps[key] || 1;
+  const val = h('b', { 'data-cnt': kind + ':' + key }, '0');
+  const go = (d) => {
+    if (!isHost()) return;
+    const s = st.settings, cur = (kind === 'min' ? s.roleMin : s.roleMax)[key] | 0;
+    const nv = Math.max(0, Math.min(cap, cur + d));
+    if (nv !== cur) sendPatch({ [kind === 'min' ? 'roleMin' : 'roleMax']: { [key]: nv } });
+  };
+  return h('span', { class: 'step' }, kind === 'min' ? '최소' : '최대',
+    h('button', { class: 'ghost', 'data-step': kind + ':' + key, onclick: () => go(-1) }, '−'), val,
+    h('button', { class: 'ghost', 'data-step': kind + ':' + key, onclick: () => go(1) }, '+'));
+}
 function roleTitle(r) { return r.key === 'beggar' ? '거지 & 부자' : r.name; }
 function roleDescEls(r, cls) {
   if (r.key !== 'beggar') return [h('div', { class: cls }, r.desc)];
@@ -583,9 +601,13 @@ function buildSettings() {
       h('input', { type: 'checkbox', 'data-key': 'selfVote', style: 'width:20px;height:20px', onchange: (e) => sendPatch({ selfVote: e.target.checked }) })),
     h('label', { class: 'field' }, h('span', null, '죽으면 직업 공개'),
       h('input', { type: 'checkbox', 'data-key': 'revealOnDeath', style: 'width:20px;height:20px', onchange: (e) => sendPatch({ revealOnDeath: e.target.checked }) })),
+    h('label', { class: 'field' }, h('span', null, '광대가 직업을 섞으면 "섞이기 전 직업" 공개'),
+      h('input', { type: 'checkbox', 'data-key': 'jokerReveal', style: 'width:20px;height:20px', onchange: (e) => sendPatch({ jokerReveal: e.target.checked }) })),
     h('h3', null, '🎭 사용할 직업'),
-    h('div', { class: 'note' }, '체크한 직업만 게임에 나와요. 커플은 2명이 함께, "거지 & 부자"는 한 번 체크하면 둘이 함께 나와요. 인원이 적으면 모든 직업이 나오지는 않아요.'),
-    h('div', { class: 'note', style: 'margin-top:4px' }, '⭐ "필수 등장"을 켜면 그 직업은 팀 최대 인원을 넘더라도 무조건 나와요. (인원이 모자라면 못 넣을 수 있어요. 거지·부자는 함께 켜져요)'));
+    h('div', { class: 'note' }, '체크한 직업만 게임에 나와요. 마피아·시민도 끌 수 있어요. 커플은 2명이 함께, "거지 & 부자"는 한 번 체크하면 둘이 함께 나와요. 인원이 적으면 모든 직업이 나오지는 않아요.'),
+    h('div', { class: 'note', style: 'margin-top:4px' }, '⭐ "필수 등장"을 켜면 그 직업은 팀 최대 인원을 넘더라도 최소 1명은 무조건 나와요. (인원이 모자라면 못 넣을 수 있어요. 거지·부자는 함께 켜져요)'),
+    h('div', { class: 'note', style: 'margin-top:4px' }, '👥 "인원"의 최소·최대로 직업마다 몇 명까지 나올지 정할 수 있어요. 최소를 1 이상으로 하면 필수 등장과 같아요. (마피아는 켜 두면 항상 1명 이상 나와요)'),
+    h('div', { id: 'warns' }));
 
   for (const team of ['mafia', 'citizen', 'neutral']) {
     const roles = meta.roles.filter((r) => r.team === team && !isPairRich(r));
@@ -606,7 +628,8 @@ function buildSettings() {
         h('div', { class: 'grow' },
           h('div', { class: 'rn' }, roleTitle(r), r.fixed ? h('span', { class: 'soon' }, '기본') : null, r.impl ? null : h('span', { class: 'soon' }, '준비 중')),
           ...roleDescEls(r, 'rd'),
-          usable ? h('label', { class: 'forced' }, fc, '⭐ 필수 등장') : null)));
+          usable ? h('label', { class: 'forced' }, fc, '⭐ 필수 등장') : null,
+          usable && (meta.caps[r.key] || 1) > 1 ? h('div', { class: 'cnts' }, '👥 인원', stepper(r.key, 'min'), stepper(r.key, 'max')) : null)));
     }
   }
   syncSettings(true);
@@ -621,15 +644,33 @@ function syncSettings(force) {
     if (inp.type === 'checkbox') inp.checked = !!s[k]; else inp.value = s[k];
     inp.disabled = !host;
   }
-  const LVNOTE = { easy: '나름 판단은 하지만 자주 틀리고, 가끔 행동을 빼먹어요.', normal: '마피아끼리 밤·투표를 맞추고, 경찰은 결과를 알려요. 투표 기록과 채팅으로 의심해요.',
-    hard: '누가 누굴 지목했는지 기억하고, 처형된 사람의 직업으로 추리해요. 마피아는 가짜 경찰 행세도 해요.', extreme: '거의 실수 없이 위협적인 사람을 노리고, 필요하면 동료를 희생해 의심을 피해요.' };
+  const LVNOTE = { easy: '증거를 잘 따지지 못해 자주 틀려요. 가끔 행동을 빼먹고, 마피아도 실수로 팀원을 건드려요.', normal: '경찰 결과와 채팅을 참고해 의심하고, 마피아끼리 밤·투표를 맞춰요. 지목당하면 반박해요.',
+    hard: '경찰이 둘 나오면 거짓말을 가려내고, 근거 없이 몰아가는 사람을 의심해요. 마피아는 가짜 경찰로 맞불을 놓아요.', extreme: '증거를 꼼꼼히 따져 표를 모으고, 진짜 경찰은 가짜 경찰을 지적해요. 마피아는 경찰·의사처럼 위협적인 사람을 노리고, 필요하면 동료를 희생해 의심을 피해요.' };
   for (const b of sheet.querySelectorAll('button[data-lv]')) b.className = b.getAttribute('data-lv') === s.botLevel ? '' : 'ghost';
   const note = sheet.querySelector('#lvnote'); if (note) note.textContent = (LVNOTE[s.botLevel] || '') + ' (봇은 남의 직업을 몰래 보지 않아요)';
   for (const cb of sheet.querySelectorAll('input[data-role]')) {
     const r = ROLE[cb.getAttribute('data-role')];
-    if (r.fixed) continue;
     cb.checked = s.enabledRoles.includes(r.key);
     cb.disabled = !(r.impl && host);
+  }
+  for (const el of sheet.querySelectorAll('[data-cnt]')) {
+    const [kind, key] = el.getAttribute('data-cnt').split(':');
+    el.textContent = String((kind === 'min' ? s.roleMin : s.roleMax)[key] | 0);
+  }
+  for (const b of sheet.querySelectorAll('button[data-step]')) b.disabled = !host || !s.enabledRoles.includes(b.getAttribute('data-step').split(':')[1]);
+  for (const row of sheet.querySelectorAll('.rrow')) {
+    const c = row.querySelector('input[data-role]');
+    if (c) row.classList.toggle('off', !c.checked);
+  }
+  const warns = sheet.querySelector('#warns');
+  if (warns) {
+    warns.innerHTML = '';
+    const en = s.enabledRoles;
+    const hasMafiaTeam = ['spy', 'madam', 'assassin', 'ghost', 'informant', 'doppelganger'].some((k) => en.includes(k));
+    if (!en.includes('mafia') || s.roleMax.mafia === 0) warns.append(h('div', { class: 'warnbox' }, hasMafiaTeam
+      ? '⚠ 일반 마피아가 꺼져 있어요. 마피아 팀이 보조 직업만으로 구성돼서 직접 공격할 사람이 없을 수 있어요. 이 경우 게임이 길어지거나 무승부가 될 수 있어요.'
+      : '⚠ 마피아 팀으로 쓸 직업이 하나도 없어요. 그대로 시작하면 일반 마피아가 자동으로 들어가요.'));
+    if (!en.includes('citizen') || s.roleMax.citizen === 0) warns.append(h('div', { class: 'warnbox' }, '⚠ 일반 시민이 꺼져 있어요. 시민 팀은 특수 직업으로만 채워지고, 직업이 모자라면 일반 시민이 대신 들어가요.'));
   }
   for (const fc of sheet.querySelectorAll('input[data-forced]')) {
     const r = ROLE[fc.getAttribute('data-forced')];
@@ -654,7 +695,7 @@ function clearMemo() { if (memoCache && Object.keys(memoCache.m).length) { memoC
 function memoOn(q) { return st.phase !== 'lobby' && st.phase !== 'ended' && q.id !== st.meId; }
 function memoRoles() { // 이번 판에 나올 수 있는 직업만
   const on = st.settings.enabledRoles || [];
-  return meta.roles.filter((r) => r.impl && (r.fixed || on.includes(r.key)));
+  return meta.roles.filter((r) => r.impl && (r.key === 'mafia' || r.key === 'citizen' || on.includes(r.key))); // 광대로 누구나 마피아·시민이 될 수 있어서 항상 포함
 }
 function openMemo(pid) {
   const q = pById(pid); if (!q) return;
@@ -700,7 +741,7 @@ function buildGuide() {
       P(K('아침'), ': 밤에 일어난 일이 알려지고 자유롭게 토론해요.'),
       P(K('투표'), ': 처형할 사람을 골라요. 최다 득표자가 ', K('한 명일 때만'), ' 처형되고, 동률이면 아무도 처형되지 않아요. 기권도 가능해요. 방 설정에 따라 자기 자신에게도 투표할 수 있어요. 투표할 수 있는 모두가 투표하면 바로 개표해요.'),
       P(K('테러리스트'), '가 투표로 처형되면 잠깐(15초) 동안 함께 죽을 사람을 고를 수 있어요.'),
-      P(K('아침 시간 조절'), ': 살아 있는 사람은 아침마다 한 번, "5초 줄이기"와 "5초 늘리기" 중 하나를 쓸 수 있어요. 쓰면 모두에게 알려져요.'),
+      P(K('아침 시간 조절'), ': 살아 있는 사람은 아침마다 한 번, "10초 줄이기"와 "10초 늘리기" 중 하나를 쓸 수 있어요. 쓰면 모두에게 알려져요.'),
       h('h3', null, '🏆 승리 조건'),
       P(K('시민 팀'), ': 마피아 팀과 중립 팀이 모두 사라지면 승리.'),
       P(K('마피아 팀'), ': 시민 팀 + 중립 팀 인원이 마피아 팀 인원과 같거나 적어지면 승리.'),
@@ -708,14 +749,14 @@ function buildGuide() {
       h('h3', null, '💬 채팅'),
       P(K('낮'), '에는 모두가 함께 얘기해요. ', K('밤'), '에는 접선한 마피아 팀끼리, 커플끼리 대화할 수 있어요. 죽은 사람들은 따로 대화하고, 영매는 죽은 사람과 이야기할 수 있어요.'),
       h('h3', null, '🔒 비밀 지키기'),
-      P('내 직업과 능력 결과는 나에게만 보여요. 다른 사람의 직업은 죽어서 공개되거나 능력으로 알아내기 전까지 몰라요.')));
+      P('내 직업과 능력 결과는 나에게만 보여요. 다른 사람의 직업은 능력으로 알아내기 전까지 몰라요. (방 설정에서 "죽으면 직업 공개"를 켠 경우에만 죽은 사람의 직업이 공개돼요. 기본은 비공개예요.)')));
   } else if (guideTab === 'roles') {
     const on = st.settings.enabledRoles || [];
     sheet.append(h('div', { class: 'note' }, '이번 방에서 쓰도록 체크된 직업만 나올 수 있어요. 인원이 적으면 전부 나오지는 않아요. 체크 해제된 직업은 흐리게 표시돼요.'));
     for (const team of ['mafia', 'citizen', 'neutral']) {
       sheet.append(h('div', { class: 'teamhead' }, h('span', { style: 'color:' + TEAM_COLOR[team] }, meta.teams[team])));
       for (const r of meta.roles.filter((x) => x.team === team && x.impl && !isPairRich(x))) {
-        const included = r.fixed || on.includes(r.key);
+        const included = on.includes(r.key);
         const mine = st.me && (st.me.role === r.key || (r.key === 'beggar' && st.me.role === 'rich'));
         sheet.append(h('div', { class: 'rrow' + (included ? '' : ' off') },
           h('div', null,

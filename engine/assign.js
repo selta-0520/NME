@@ -1,69 +1,131 @@
 'use strict';
 // 직업 배정
-const { ROLES } = require('../roles');
+//  - 직업마다 "최소~최대 인원"을 정할 수 있다. (⭐ 필수 = 최소 1명 이상)
+//  - 마피아·시민도 다른 직업처럼 넣기/빼기가 가능하다.
+//  - 마피아 팀 인원 = 참가 인원 ÷ 4 (최소 1명). 중립 팀은 팀 최대 인원까지 채운다.
+const { ROLES, roleCap } = require('../roles');
 const U = require('./util');
 
-// 팀별로 "묶음" 목록을 만든다. 커플(2명), 거지+부자(2명)는 한 묶음.
-function unitsFor(team, enabled) {
-  const out = [];
-  for (const r of ROLES) {
-    if (r.team !== team || r.fixed || !enabled.has(r.key)) continue;
-    if (r.key === 'couple') out.push(['couple', 'couple']);
-    else if (r.key === 'beggar' || r.key === 'rich') {
-      if (r.key === 'beggar' && enabled.has('rich')) out.push(['beggar', 'rich']);
-    } else out.push([r.key]);
-  }
-  return U.shuffle(out);
-}
-function takeUnits(units, cap, left) {
-  const roles = [];
-  for (const u of units) {
-    if (roles.length + u.length <= cap) roles.push(...u);
-    else if (left) left.push(...u);
-  }
-  return roles;
-}
-// 필수 지정된 묶음과 아닌 묶음으로 나눈다
-function splitForced(units, forced) {
-  return { fu: units.filter((u) => u.some((k) => forced.has(k))), ou: units.filter((u) => !u.some((k) => forced.has(k))) };
-}
+const SIZE = (k) => (k === 'couple' || k === 'beggar' ? 2 : 1); // 커플·(거지+부자)는 2명이 한 묶음
 
 function assignRoles(room) {
   const s = room.settings;
-  const enabled = new Set(s.enabledRoles);
   const n = room.players.length;
+  const enabled = new Set(s.enabledRoles);
+  const forcedSet = new Set(s.forcedRoles || []); // ⭐ 필수 = 최소 1명
+  if (!enabled.has('beggar') || !enabled.has('rich')) { enabled.delete('beggar'); enabled.delete('rich'); }
+  const skipped = [], notes = [];
 
-  const forced = new Set(s.forcedRoles || []);
-  const skipped = [];
-  const mafiaCount = Math.max(1, Math.floor(n / 4));
+  // 직업별 [최소, 최대] (묶음 개수 기준)
+  const rng = (key) => {
+    if (!enabled.has(key)) return [0, 0];
+    const cap = roleCap(key);
+    let mn = Math.min(cap, Math.max(0, (s.roleMin && s.roleMin[key]) | 0));
+    const mxRaw = s.roleMax && s.roleMax[key] != null ? s.roleMax[key] | 0 : (key === 'mafia' || key === 'citizen' ? cap : 1);
+    const mx = Math.min(cap, Math.max(mn, mxRaw));
+    if (forcedSet.has(key) && mx > 0) mn = Math.max(mn, 1);
+    if (key === 'mafia' && mx > 0) mn = Math.max(mn, 1); // 마피아를 켜 두었다면 일반 마피아는 항상 1명 이상 (공격할 사람이 있어야 하니까)
+    return [mn, mx];
+  };
+  const keysOf = (team) => ROLES.filter((r) => r.team === team && r.key !== 'rich' && rng(r.key)[1] > 0).map((r) => r.key);
+  const counts = {};
+  const cnt = (k) => counts[k] || 0;
+  const add = (k) => { counts[k] = cnt(k) + 1; };
 
-  // 중립: 필수 직업은 팀 최대 인원을 넘어도 넣고(시민이 1명은 남도록), 나머지는 최대 인원 안에서 채운다
-  const neutralHard = Math.max(0, n - mafiaCount - 1);
-  const nu = splitForced(unitsFor('neutral', enabled), forced);
-  const nForced = takeUnits(nu.fu, neutralHard, skipped);
+  // 한 팀을 채운다. slots: 이 팀에 줄 수 있는 자리, plainKey: 일반 직업(마피아/시민), specialCap: 특수 직업 팀 최대 인원
+  // 반환: 실제로 채운 인원수
+  const fillTeam = (team, slots, plainKey, specialCap) => {
+    const keys = keysOf(team);
+    const specials = keys.filter((k) => k !== plainKey);
+    const plainHi = rng(plainKey)[1];
+    const specialCount = () => specials.reduce((a, k) => a + cnt(k) * SIZE(k), 0);
+    const used = () => specialCount() + cnt(plainKey);
+    const addRandomSpecial = (maxSize) => {
+      const c = specials.filter((k) => cnt(k) < rng(k)[1] && SIZE(k) <= maxSize);
+      if (!c.length) return false;
+      add(U.pick(c)); return true;
+    };
+    // 1) 최소 인원(필수)부터 넣는다. 자리가 모자라면 못 넣는다.
+    for (const k of [plainKey, ...U.shuffle(specials)]) {
+      if (!keys.includes(k)) continue;
+      for (let i = 0; i < rng(k)[0]; i++) {
+        if (used() + SIZE(k) <= slots) add(k); else if (!skipped.includes(k)) skipped.push(k);
+      }
+    }
+    if (plainHi > 0) {
+      // 2) 특수 직업을 팀 최대 인원까지 (일반 직업이 한 명도 없으면 1자리는 남겨 둔다)
+      const reserve = () => (cnt(plainKey) > 0 ? 0 : 1);
+      while (specialCount() < specialCap && addRandomSpecial(slots - used() - reserve())) { /* 계속 */ }
+      // 3) 일반 직업 최대 인원을 넘는 자리는 특수 직업이 메운다
+      while (slots - specialCount() > plainHi && addRandomSpecial(slots - used())) { /* 계속 */ }
+      counts[plainKey] = Math.max(cnt(plainKey), Math.min(plainHi, slots - specialCount()));
+    } else {
+      // 일반 직업을 끈 경우: 특수 직업만으로 채운다 (팀 최대 인원 제한 없음)
+      while (used() < slots && addRandomSpecial(slots - used())) { /* 계속 */ }
+    }
+    return used();
+  };
+
+  // ---------------- 마피아 팀
+  const mafiaKeys = keysOf('mafia');
+  let M = Math.max(1, Math.floor(n / 4));
+  const minMafia = mafiaKeys.reduce((a, k) => a + rng(k)[0] * SIZE(k), 0);
+  const maxM = Math.max(1, Math.ceil(n / 2) - 1); // 시작하자마자 마피아 팀이 이기지 않도록
+  M = Math.min(Math.max(M, minMafia), maxM);
+  const capMafia = mafiaKeys.reduce((a, k) => a + rng(k)[1] * SIZE(k), 0);
+  let forcePlainMafia = false;
+  if (capMafia === 0) { forcePlainMafia = true; notes.push('⚠ 마피아 팀으로 쓸 직업이 하나도 켜져 있지 않아 일반 마피아를 넣었어요.'); }
+  else M = Math.min(M, capMafia);
+  let mafiaUsed;
+  if (forcePlainMafia) { counts.mafia = M; mafiaUsed = M; }
+  else {
+    mafiaUsed = fillTeam('mafia', M, 'mafia', Math.max(0, s.mafiaSpecialMax));
+    if (mafiaUsed < 1) { counts.mafia = 1; mafiaUsed = 1; notes.push('⚠ 마피아 팀에 넣을 수 있는 직업이 부족해 일반 마피아 1명을 넣었어요.'); }
+  }
+  M = mafiaUsed;
+
+  // ---------------- 중립 팀 (필수는 팀 최대 인원을 넘어도 넣는다. 단, 시민이 1명은 남도록)
+  const neutralHard = Math.max(0, n - M - 1);
+  const neutralKeys = keysOf('neutral');
+  let nUsed = 0;
+  for (const k of U.shuffle(neutralKeys)) {
+    const [mn] = rng(k);
+    for (let i = 0; i < mn; i++) {
+      if (nUsed + SIZE(k) <= neutralHard) { add(k); nUsed += SIZE(k); } else if (!skipped.includes(k)) skipped.push(k);
+    }
+  }
   const neutralCap = Math.max(0, Math.min(s.neutralMax, Math.floor(n / 5), neutralHard));
-  const neutralRoles = [...nForced, ...takeUnits(nu.ou, Math.max(0, Math.min(neutralCap, neutralHard) - nForced.length))];
-  const citizenCount = n - mafiaCount - neutralRoles.length;
+  for (;;) {
+    const c = neutralKeys.filter((k) => cnt(k) < rng(k)[1] && nUsed + SIZE(k) <= Math.min(neutralCap, neutralHard));
+    if (!c.length) break;
+    const k = U.pick(c); add(k); nUsed += SIZE(k);
+  }
 
-  const mu = splitForced(unitsFor('mafia', enabled), forced);
-  const mPhys = mafiaCount - 1; // 일반 마피아 최소 1명
-  const mForced = takeUnits(mu.fu, mPhys, skipped);
-  const mafiaSpecial = [...mForced, ...takeUnits(mu.ou, Math.max(0, Math.min(s.mafiaSpecialMax, mPhys) - mForced.length))];
+  // ---------------- 시민 팀
+  const citizenCount = n - M - nUsed;
+  const cUsed = fillTeam('citizen', citizenCount, 'citizen', Math.max(0, s.citizenSpecialMax));
+  if (cUsed < citizenCount) { // 자리가 남으면 일반 시민이 메운다 (시민을 끈 경우 안내)
+    counts.citizen = cnt('citizen') + (citizenCount - cUsed);
+    if (rng('citizen')[1] === 0) notes.push('⚠ 시민 팀에 넣을 수 있는 직업이 부족해 일반 시민이 들어갔어요.');
+  }
 
-  const cu = splitForced(unitsFor('citizen', enabled), forced);
-  const cForced = takeUnits(cu.fu, citizenCount, skipped);
-  const citizenSpecial = [...cForced, ...takeUnits(cu.ou, Math.max(0, Math.min(s.citizenSpecialMax, citizenCount) - cForced.length))];
-
-  const roles = U.shuffle([
-    ...mafiaSpecial, ...Array(mafiaCount - mafiaSpecial.length).fill('mafia'),
-    ...citizenSpecial, ...Array(citizenCount - citizenSpecial.length).fill('citizen'),
-    ...neutralRoles,
-  ]);
+  // ---------------- 직업 목록 → 플레이어에게 나눠 주기
+  const list = [];
+  for (const [k, v] of Object.entries(counts)) {
+    for (let i = 0; i < v; i++) {
+      if (k === 'couple') list.push('couple', 'couple');
+      else if (k === 'beggar') list.push('beggar', 'rich');
+      else list.push(k);
+    }
+  }
+  while (list.length < n) list.push('citizen');
+  const roles = U.shuffle(list).slice(0, n);
   U.shuffle(room.players).forEach((p, i) => {
     p.role = roles[i]; p.alive = true; p.s = {}; p.team = null; p.destroyed = false; p.exorcised = false;
     p.contacted = p.role === 'mafia';
   });
   room.touches = []; room.voteActs = {}; room.pendingWin = null;
+  room.assignNotes = notes;
   return [...new Set(skipped)];
 }
 

@@ -1,156 +1,321 @@
 'use strict';
-// 봇 두뇌. 봇은 사람과 똑같이 handleAction 으로만 행동하고, 남의 직업을 몰래 보지 않습니다.
-// 알 수 있는 것: 자기 직업·팀원, 자기가 조사한 결과, 공개된 죽음/투표 수, 채팅 내용(사람 채팅의 이름·의심 표현 읽기)
+// 봇 두뇌 (v2). 봇은 사람과 똑같이 handleAction 으로만 행동하고, 남의 직업을 몰래 보지 않습니다.
+// 봇이 쓰는 정보:
+//   · 내 직업·내 능력 결과(내게 온 개인 메시지)·내가 아는 마피아 팀원
+//   · 모두에게 공개된 것: 채팅(사람/봇이 한 말), 사망 공지, 투표 현황의 "득표 수"(누가 누구에게 찍었는지는 모릅니다)
+// 추리 방식: 모든 정보를 "의심 점수"로 합칩니다. (경찰 주장의 신뢰도, 거짓말 탐지, 지목·두둔, 침묵, 밤 사건 등)
 const crypto = require('crypto');
-const { ROLE } = require('./roles');
+const { ROLES, ROLE } = require('./roles');
 const E = require('./engine');
 const { U } = E;
 
 let deps = null;
 function init(d) { deps = d; }
 
-// once: 1회용 능력을 쓸 확률(밤마다) / skip: 행동을 빼먹을 확률 / mistake: 마피아가 실수로 팀원을 고를 확률
+// noise: 판단에 섞이는 무작위 / think: 증거를 얼마나 반영하나 / skip: 행동을 빼먹을 확률 / mistake: 마피아의 팀원 오공격
+// speak: 말 많은 정도 / consensus: 다수 의견을 따르는 정도 / counter: 가짜 경찰 맞불 / defend: 지목당하면 반박 / intent: 투표 예고
 const LEVELS = {
-  easy:    { skip: 0.15, mistake: 0.12, speak: 0.5,  once: 0.35, bandwagon: 4,  noise: 28, coordinate: false, claim: true, listen: false, deceive: false, sacrifice: false, threat: false, follow: false },
-  normal:  { skip: 0.04, mistake: 0.03, speak: 0.7,  once: 0.5,  bandwagon: 7,  noise: 12, coordinate: true,  claim: true, listen: true,  deceive: false, sacrifice: false, threat: true,  follow: true },
-  hard:    { skip: 0.01, mistake: 0,    speak: 0.85, once: 0.6,  bandwagon: 9,  noise: 6,  coordinate: true,  claim: true, listen: true,  deceive: true,  sacrifice: false, threat: true,  follow: true },
-  extreme: { skip: 0,    mistake: 0,    speak: 0.95, once: 0.7,  bandwagon: 11, noise: 2,  coordinate: true,  claim: true, listen: true,  deceive: true,  sacrifice: true,  threat: true,  follow: true },
+  easy:    { noise: 48, think: 0.2,  skip: 0.2,  mistake: 0.15, speak: 0.45, consensus: 0.1,  coord: false, counter: false, fake: false, defend: 0.4,  intent: 0.3, sacrifice: false, hunt: false, once: 0.35, band: 4 },
+  normal:  { noise: 22, think: 0.6,  skip: 0.05, mistake: 0.05, speak: 0.7,  consensus: 0.5,  coord: true,  counter: false, fake: true,  defend: 0.8,  intent: 0.6, sacrifice: false, hunt: true,  once: 0.5,  band: 7 },
+  hard:    { noise: 9,  think: 0.9,  skip: 0.01, mistake: 0,    speak: 0.85, consensus: 0.8,  coord: true,  counter: true,  fake: true,  defend: 0.95, intent: 0.8, sacrifice: false, hunt: true,  once: 0.6,  band: 8 },
+  extreme: { noise: 3,  think: 1,    skip: 0,    mistake: 0,    speak: 0.95, consensus: 0.93, coord: true,  counter: true,  fake: true,  defend: 1,    intent: 0.9, sacrifice: true,  hunt: true,  once: 0.7,  band: 9 },
 };
 const LEVEL_KEYS = Object.keys(LEVELS);
-const LINES = ['누가 수상한지 얘기해 봐요', '저는 시민이에요', '조용한 사람이 의심스러워요', '일단 지켜볼게요', '투표는 신중하게 해요', '어제 밤에 무슨 일이 있었죠?', '의심 가는 사람 있어요?'];
+const FILLERS = ['안녕하세요! 다들 잘 부탁해요.', '아직은 단서가 없네요. 의견 좀 들어봐요.', '어제 밤에 무슨 일이 있었죠?', '조용한 사람이 신경 쓰이네요.', '투표는 신중하게 해요.', '일단 지켜볼게요.', '의심 가는 사람 있어요?'];
 const ONCE = new Set(['reporter', 'priest', 'angel', 'scientist']);
-const HOSTILE = new Set(['thug', 'ghost', 'assassin', 'terrorist', 'reporter']);
-const FRIENDLY = new Set(['doctor', 'bodyguard', 'volunteer', 'angel', 'scientist']);
+const ROLE_BY_NAME = {}; for (const r of ROLES) ROLE_BY_NAME[r.name] = r.key;
+const CLAIMABLE = ['police', 'doctor', 'soldier', 'politician', 'bodyguard', 'detective', 'reporter', 'medium'];
 
 const rnd = (a) => a[crypto.randomInt(a.length)];
 const chance = (p) => Math.random() < p;
-const lv = (room) => LEVELS[room.settings.botLevel] || LEVELS.normal;
-function bm(room) { if (!room.bm) room.bm = { sus: {}, claims: [], cop: {}, hunt: {}, acc: {} }; return room.bm; }
-function bmem(p) { if (!p.b) p.b = { checks: {}, pending: null, toAnnounce: null, faked: false }; return p.b; }
+const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+// 봇마다 난이도를 따로 줄 수 있다 (p.lvl, 시험용). 없으면 방 설정을 따른다.
+const lv = (room, p) => LEVELS[(p && p.lvl) || room.settings.botLevel] || LEVELS.normal;
+const names = (list) => list.map((x) => x.name).join(', ');
+// 반응 지연: 낮 시간의 몇 %로 정한다 (낮이 90초면 대략 2~5초)
+const delayMs = (room, a, b) => Math.max(400, (a + Math.random() * (b - a)) * (room.settings.daySec || 60) * 1000);
 function act(room, p, body) { try { deps.handleAction(room, p, body); return true; } catch (e) { return false; } }
-const say = (room, p, text) => act(room, p, { type: 'chat', text });
-const nCop = (room) => Object.keys(bm(room).cop).filter((id) => { const q = U.byId(room, id); return q && q.alive; }).length;
+const byName = (room, n) => room.players.find((x) => x.name === n);
+const aliveBots = (room) => room.players.filter((x) => x.bot && x.alive);
 
-function tallyOf(room) {
-  const t = {};
-  for (const [vid, tid] of Object.entries(room.votes)) {
-    if (tid === 'skip') continue;
-    const v = U.byId(room, vid); if (!v) continue;
-    t[tid] = (t[tid] || 0) + E.weight(v);
-  }
-  return t;
+// ------------------------------------------------------------ 기억
+function ai(room) {
+  if (!room.ai) room.ai = { claims: [], res: [], acc: [], vouch: [], intent: {}, dead: {}, pubRole: {}, talk: {}, lastMsgId: 0, fail: {}, tried: {}, plan: {}, healedDay: -9, lastKill: null, said: {} };
+  return room.ai;
 }
-
-function addClaim(room, by, target, result) {
-  const m = bm(room);
-  m.cop[by.id] = true;
-  m.claims.push({ by: by.id, target: target.id, result });
+function pm(p) {
+  if (!p.ai) p.ai = { checks: {}, known: {}, hint: {}, pending: null, lastPriv: 0, announced: {}, replied: {}, spoke: {}, lastSay: 0, lastTop: null, detA: null, fakeDay: 0, claimed: {} };
+  return p.ai;
 }
+function reset(room) { room.ai = null; for (const p of room.players) p.ai = null; }
 
-// 이 사람이 얼마나 수상한가 (높을수록 의심)
-function suspicion(room, me, c, tally) {
-  const L = lv(room), m = bm(room), b = bmem(me);
-  let s = m.sus[c.id] || 0;
-  if (b.checks[c.id] === 'mafia') s += 200; else if (b.checks[c.id] === 'clean') s -= 200;
-  const n = nCop(room);
-  for (const cl of m.claims) {
-    if (cl.target !== c.id) continue;
-    const by = U.byId(room, cl.by);
-    if (!by || !by.alive || by === me) continue;
-    const w = n <= 1 ? 60 : 15;
-    s += cl.result === 'mafia' ? w : -w;
+// 공개 정보 읽기: 모두가 보는 공지(sys)에서 단서를 뽑는다
+function syncSys(room) {
+  const A = ai(room);
+  const fresh = room.chat.filter((m) => m.id > A.lastMsgId);
+  for (const m of fresh) {
+    A.lastMsgId = Math.max(A.lastMsgId, m.id);
+    if (m.ch !== 'sys') continue;
+    const t = m.text;
+    let r;
+    if (t.startsWith('🩺 마피아의 습격')) A.healedDay = room.day;
+    else if ((r = /^📰 속보! (.+?)님의 직업은 "(.+?)"입니다/.exec(t))) { const q = byName(room, r[1]); if (q && ROLE_BY_NAME[r[2]]) A.pubRole[q.id] = ROLE_BY_NAME[r[2]]; }
+    else if ((r = /^🏛 정치인 (.+?)님은/.exec(t))) { const q = byName(room, r[1]); if (q) A.pubRole[q.id] = 'politician'; }
+    else if ((r = /^🌀 (.+?)님은 처형 투표에서/.exec(t))) { const q = byName(room, r[1]); if (q) A.pubRole[q.id] = 'madman'; }
+    else if ((r = /^🛡 경호원이 지키던 (.+?)님이 공격으로 사망했습니다! 공격한 사람은 (.+?)님입니다/.exec(t))) {
+      const by = byName(room, r[2]); if (by) A.exposed = (A.exposed || {}), A.exposed[by.id] = (A.exposed[by.id] || 0) + 1;
+    } else if (t.startsWith('🃏')) { A.claims = []; A.res = []; A.acc = []; A.vouch = []; A.intent = {}; for (const q of room.players) if (q.ai) { q.ai.checks = {}; q.ai.known = {}; q.ai.hint = {}; } }
+    else if ((r = /^📜 섞이기 전의 원래 직업: (.+)$/.exec(t))) { /* 직업이 모두 바뀌었으니 예전 정보는 버린다 (위에서 이미 초기화) */ }
   }
-  if (n > 1 && m.cop[c.id]) s += 20; // 경찰이 둘 이상이면 서로 거짓말일 수 있음
-  if (tally && tally[c.id]) s += tally[c.id] * L.bandwagon;
+}
+// 내게 온 개인 메시지에서 능력 결과를 읽는다
+function syncPriv(room, p) {
+  const b = pm(p);
+  for (const m of room.chat) {
+    if (m.ch !== 'priv' || m.to !== p.id || m.id <= b.lastPriv) continue;
+    b.lastPriv = m.id;
+    const t = m.text; let r;
+    if ((r = /^🔍 조사 결과: (.+?)님은 (마피아입니다|마피아가 아닙니다)/.exec(t))) { const q = byName(room, r[1]); if (q) { b.checks[q.id] = r[2] === '마피아입니다' ? 'mafia' : 'clean'; if (b.checks[q.id] === 'mafia') b.announced[q.id] = false; } }
+    else if ((r = /^🕵 조사 결과: (.+?)님의 직업은 "(.+?)"입니다/.exec(t))) {
+      const q = byName(room, r[1]), k = ROLE_BY_NAME[r[2]];
+      if (q && k) { b.known[q.id] = k; if (ROLE[k].team === 'mafia') b.checks[q.id] = 'mafia'; }
+    } else if ((r = /^🕵 비교 결과: (.+?)님과 (.+?)님은 (같은 팀|다른 팀)/.exec(t))) {
+      const a = byName(room, r[1]), c = byName(room, r[2]);
+      if (a && c) {
+        const ref = b.detA === a.id ? c : a, tgt = ref === c ? a : c; // 밤에 고른 사람이 tgt
+        const refClean = b.checks[ref.id] === 'clean' || b.known[ref.id] === 'citizen';
+        const same = r[3] === '같은 팀';
+        if (same) b.hint[tgt.id] = (b.hint[tgt.id] || 0) - (refClean ? 140 : 40); else b.hint[tgt.id] = (b.hint[tgt.id] || 0) + (refClean ? 130 : 30);
+      }
+    } else if ((r = /^🔮 성불 결과: (.+?)님의 직업은 "(.+?)"였습니다/.exec(t))) { const q = byName(room, r[1]), k = ROLE_BY_NAME[r[2]]; if (q && k) b.known[q.id] = k; }
+    else if ((r = /^📨 메시지를 보낸 (.+?)님이 사망했습니다. 진짜 직업은 "(.+?)"였습니다/.exec(t))) { const q = byName(room, r[1]), k = ROLE_BY_NAME[r[2]]; if (q && k) b.known[q.id] = k; }
+    else if ((r = /^📢 밀고 성공! 경찰: (.*?) \/ 의사: (.*)$/.exec(t))) {
+      for (const n of r[1].split(', ')) { const q = byName(room, n); if (q) b.known[q.id] = 'police'; }
+      for (const n of r[2].split(', ')) { const q = byName(room, n); if (q) b.known[q.id] = 'doctor'; }
+    } else if ((r = /^📢 (.+?)님은 마피아가 아니었습니다/.exec(t))) { const q = byName(room, r[1]); if (q) b.checks[q.id] = 'clean'; }
+    else if (t.startsWith('🕵 스파이') || t.startsWith('⚠ 군인')) { /* 군인 관련 알림 */ }
+    else if ((r = /^🛡 지키던 (.+?)님이 사망했습니다/.exec(t))) { /* 경호원 알림: 공개 공지에서 처리 */ }
+  }
+}
+function sync(room, p) { syncSys(room); if (p) syncPriv(room, p); }
+
+// ------------------------------------------------------------ 추리
+const publicRole = (room, id) => ai(room).pubRole[id] || null;
+// 내가 팀원으로 아는 사람 (접선한 마피아 팀끼리, 접선한 밀고자는 명단을 안다)
+function knownMate(me, c) { return c !== me && (U.inMafiaChat(me) || (me.role === 'informant' && me.contacted)) && U.inMafiaChat(c); }
+const mafiaSide = (me) => U.teamOf(me) === 'mafia';
+function claimants(room, role) { const out = []; for (const c of ai(room).claims) if (c.role === role && !out.includes(c.by)) out.push(c.by); return out; }
+function claimedRole(room, id, role) { return ai(room).claims.some((c) => c.by === id && c.role === role); }
+
+// 공개 주장을 한 사람이 얼마나 믿을 만한가 (0~1)
+function cred(room, me, by, role) {
+  const A = ai(room), q = U.byId(room, by); if (!q) return 0;
+  if (by === me.id) return 1;
+  if (knownMate(me, q)) return 0;
+  const pr = publicRole(room, by); if (pr) return pr === role ? 1 : 0;
+  const b = pm(me); if (b.known[by]) return b.known[by] === role ? 1 : 0;
+  const list = claimants(room, role), rank = list.indexOf(by);
+  if (rank < 0) return 0.5;
+  let w = list.length <= 1 ? 0.88 : 1 / list.length; // 주장이 둘 이상이면 진짜는 많아야 한 명: 어느 쪽이 진짜인지는 반반
+  const d = A.dead[by];
+  if (d && d.phase === 'night' && d.how === 'mafia') w = Math.max(w, 0.95); // 마피아가 노릴 만큼 위협적이었다
+  else if (!d) for (const o of list) { const od = A.dead[o]; if (o !== by && od && od.phase === 'night' && od.how === 'mafia') w = Math.min(w, 0.15); } // 진짜가 죽고 남은 쪽은 가짜일 확률이 높다
+  if (me.role === role && by !== me.id) w = roleCapMulti(room, role) ? Math.min(w, 0.4) : 0; // 내가 그 직업인데 남이 주장하면 거짓말
+  return w;
+}
+const roleCapMulti = (room, role) => ((room.settings.roleMax && room.settings.roleMax[role]) || 1) > 1;
+
+// 이 사람이 마피아일 가능성 점수 (높을수록 의심, 내가 확실히 아는 팀원은 -1000)
+function sus(room, me, c, o) {
+  o = o || {};
+  const L = lv(room, me), A = ai(room), b = pm(me), T = L.think;
+  if (c === me || knownMate(me, c)) return -1000;
+  if (b.checks[c.id] === 'mafia') return 1000;
+  const social = !o.noSocial;
+  let s = b.hint[c.id] || 0;
+  if (b.checks[c.id] === 'clean') s -= 250;
+  const kr = b.known[c.id];
+  if (kr) s += ROLE[kr].team === 'mafia' ? 400 : -150;
+  const pr = publicRole(room, c.id);
+  if (pr) s += ROLE[pr].team === 'mafia' ? 400 : ROLE[pr].team === 'citizen' ? -150 : 0;
+  // 경찰 조사 주장
+  for (const r of A.res) {
+    if (r.target !== c.id || r.by === me.id) continue;
+    const by = U.byId(room, r.by); if (!by) continue;
+    let w = cred(room, me, r.by, 'police');
+    const mine = b.checks[r.target]; if (mine) w = mine === r.res ? Math.max(w, 0.9) : 0; // 내 조사와 같으면 신뢰, 다르면 거짓말
+    if (mafiaSide(me) && knownMate(me, by)) continue;
+    s += (r.res === 'mafia' ? 170 : -110) * w * T;
+  }
+  // 직업을 공개 주장한 사람: 같은 직업 주장이 둘 이상이면 서로 의심스럽다
+  for (const role of CLAIMABLE) {
+    if (!claimedRole(room, c.id, role)) continue;
+    const w = cred(room, me, c.id, role);
+    s += (0.55 - w) * 90 * T;
+    if (role === 'police' && claimants(room, role).length >= 2 && w < 0.9) s += 60 * T; // 경찰이 둘 이상 → 한 명은 가짜(마피아 쪽)
+  }
+  // 지목/두둔: 믿을 만한 사람의 지목일수록 무게가 크다 (의심스러운 사람의 지목은 별로 안 믿는다)
+  const accusers = new Set();
+  for (const a of A.acc) {
+    if (a.target === c.id && a.by !== me.id && a.by !== c.id) {
+      const q = U.byId(room, a.by);
+      if (q && q.alive && !accusers.has(a.by)) {
+        accusers.add(a.by);
+        if (social) { const w = clamp(1 - sus(room, me, q, { noSocial: true }) / 120, 0.2, 2); s += (b.checks[a.by] === 'mafia' ? -10 : knownMate(me, q) ? 0 : 6 * w) * T; }
+      } else if (q && !q.alive && A.dead[a.by] && A.dead[a.by].phase === 'night' && social) s += 8 * T; // 밤에 죽은 사람이 의심하던 사람
+    }
+    if (a.by === c.id) {
+      const bad = (b.checks[a.target] === 'clean') || (A.res.some((r) => r.target === a.target && r.res === 'clean' && cred(room, me, r.by, 'police') > 0.6));
+      const good = (b.checks[a.target] === 'mafia') || (A.res.some((r) => r.target === a.target && r.res === 'mafia' && cred(room, me, r.by, 'police') > 0.6));
+      if (bad) s += 14 * T; if (good) s -= 14 * T;
+    }
+  }
+  if (social) { // 근거 없이 남을 몰아가는 사람은 수상하다 (마피아가 무고한 사람을 몰아갈 때 흔한 모습)
+    let base = 0; const seen = new Set();
+    for (const a of A.acc) {
+      if (a.by !== c.id || seen.has(a.target) || a.target === me.id) continue;
+      seen.add(a.target);
+      const t = U.byId(room, a.target); if (!t || !t.alive) continue;
+      if (b.checks[t.id] === 'mafia' || knownMate(me, t)) continue;
+      if (sus(room, me, t, { noSocial: true }) < 10 && !(A.res.some((r) => r.by === c.id && r.target === t.id))) base++;
+    }
+    s += Math.min(base, 3) * 7 * T;
+  }
+  for (const v of A.vouch) {
+    if (v.by !== c.id) continue;
+    const t = U.byId(room, v.target);
+    if (t && (b.checks[t.id] === 'mafia' || (A.exposed && A.exposed[t.id]))) s += 16 * T;
+  }
+  if (A.exposed && A.exposed[c.id]) s += 200 * T; // 경호원 덕분에 공격한 사람으로 드러남
+  if (!social) return s;
+  if (room.day >= 2 && !(A.talk[c.id] > 0) && c.alive) s += 5 * T; // 계속 말이 없는 사람
+  // 투표 흐름
+  if (o.tally && o.tally[c.id]) s += o.tally[c.id] * L.band * T;
+  let ic = 0;
+  for (const [id, v] of Object.entries(A.intent)) if (v.t === c.id && v.day === room.day && id !== me.id && id !== c.id) ic++;
+  s += ic * 7 * T;
   return s;
 }
+// 공개 정보만으로 본 "마을의 의심"
+function townView(room, me, c) { return sus(room, me, c); }
 
-// ------------------------------------------------------------ 채팅 읽기 (사람 채팅)
-function hear(room, m) {
-  const L = lv(room);
-  if (!L.listen) return;
-  const sp = U.byId(room, m.from); if (!sp) return;
-  const text = m.text, M = bm(room);
-  const accuse = /마피아|의심|수상|범인|처형/.test(text);
-  const defend = /아니|시민|믿|확실|무고/.test(text);
-  const sayCop = /경찰/.test(text) && /(저는|제가|내가|나는|저 경찰|난 )/.test(text);
-  if (sayCop) M.cop[sp.id] = true;
-  for (const q of U.alive(room)) {
-    if (q.id === sp.id || !text.includes(q.name)) continue;
-    if (accuse && !defend) { M.sus[q.id] = (M.sus[q.id] || 0) + 12; (M.acc[sp.id] = M.acc[sp.id] || {})[q.id] = 1; if (sayCop) addClaim(room, sp, q, 'mafia'); }
-    else if (defend && !accuse) { M.sus[q.id] = (M.sus[q.id] || 0) - 8; if (sayCop) addClaim(room, sp, q, 'clean'); }
-  }
+// 투표로 처형할 수 없다는 게 알려진 사람
+const immune = (room, c) => publicRole(room, c.id) === 'politician';
+
+// ------------------------------------------------------------ 밤: 대상 고르기
+function best(cands, fn, noise) {
+  let bs = -1e9, bc = [];
+  for (const c of cands) { const v = fn(c) + Math.random() * noise; if (v > bs + 1e-9) { bs = v; bc = [c]; } else if (Math.abs(v - bs) <= 1e-9) bc.push(c); }
+  return bc.length ? rnd(bc) : null;
+}
+// 마피아 팀이 노릴 만한 가치
+function killValue(room, me, c) {
+  const A = ai(room), L = lv(room, me);
+  let v = 0;
+  const pc = claimedRole(room, c.id, 'police') ? cred(room, me, c.id, 'police') : 0;
+  v += 200 * pc;
+  if (claimedRole(room, c.id, 'doctor')) v += 90;
+  if (claimedRole(room, c.id, 'detective') || claimedRole(room, c.id, 'bodyguard')) v += 40;
+  const b = pm(me);
+  if (b.known[c.id] === 'police' || b.known[c.id] === 'doctor') v += 120;
+  for (const a of A.acc) if (a.by === c.id) { const t = U.byId(room, a.target); if (t && (knownMate(me, t) || t === me)) v += 45; }
+  for (const r of A.res) if (r.by === c.id && r.res === 'mafia') { const t = U.byId(room, r.target); if (t && (knownMate(me, t) || t === me)) v += 120; }
+  v -= sus(room, me, c) * (L.think >= 0.9 ? 0.2 : 0.1); // 마을이 믿는 사람일수록 위협적
+  v -= (A.fail[c.id] || 0) * 120;
+  if (A.healedDay === room.day - 1 && A.lastKill === c.id) v -= 40;
+  if (publicRole(room, c.id) && ROLE[publicRole(room, c.id)].team === 'neutral') v -= 20;
+  return v;
 }
 
-// ------------------------------------------------------------ 밤
 function pickNight(room, p, opt, mode) {
-  const L = lv(room), m = bm(room), b = bmem(p);
+  const L = lv(room, p), A = ai(room), b = pm(p);
   const cands = opt.targets.map((id) => U.byId(room, id)).filter(Boolean);
-  const best = (fn) => {
-    let bs = -1e9, bc = [];
-    for (const c of cands) { const s = fn(c) + Math.random() * L.noise; if (s > bs) { bs = s; bc = [c]; } else if (s === bs) bc.push(c); }
-    return rnd(bc).id;
-  };
-  const sus = (c) => suspicion(room, p, c, null);
-  const role = p.role, team = U.teamOf(p);
+  if (!cands.length) return null;
+  const role = p.role, team = U.teamOf(p), N = L.noise;
+  const S = (c) => sus(room, p, c);
+  const trust = (c) => -S(c);
 
   if (U.canAttackAsMafia(room, p)) {
-    if (L.coordinate) { // 이미 팀원이 고른 대상이 있으면 따라간다
-      const picks = Object.entries(room.night.acts)
-        .filter(([pid, a]) => a.target && pid !== p.id && U.byId(room, pid) && U.canAttackAsMafia(room, U.byId(room, pid)))
-        .map(([, a]) => a.target).filter((t) => opt.targets.includes(t));
+    if (L.coord) { // 이미 팀원이 고른 대상이 있으면 따라간다
+      const picks = Object.entries(room.night.acts).filter(([pid, a]) => a.target && pid !== p.id && U.byId(room, pid) && U.canAttackAsMafia(room, U.byId(room, pid))).map(([, a]) => a.target).filter((t) => opt.targets.includes(t));
       if (picks.length) return rnd(picks);
     }
-    const mates = U.alive(room).filter((x) => U.inMafiaChat(x));
-    const acc = (c) => mates.reduce((n, t) => n + ((m.acc[c.id] && m.acc[c.id][t.id]) || 0), 0);
-    return best((c) => (m.hunt[c.id] ? 80 : 0) + (L.threat && m.cop[c.id] ? 60 : 0) + (L.threat ? acc(c) * 25 : 0) - (L.threat ? (m.sus[c.id] || 0) * 0.2 : 0) - ((m.fail && m.fail[c.id]) || 0) * 100);
+    const pool = chance(L.mistake) ? cands : cands.filter((c) => !knownMate(p, c));
+    const c = best(pool.length ? pool : cands, (x) => killValue(room, p, x), N * 2);
+    return c && c.id;
   }
-  if (role === 'police') return best((c) => (b.checks[c.id] ? -100 : 0) + sus(c));
-  if (team === 'mafia') { // 마피아 팀 특수직업: 팀원은 피하고 경찰 행세하는 사람을 노린다
-    const non = cands.filter((c) => !U.inMafiaChat(c));
-    const pool = non.length ? non : cands;
-    let bs = -1e9, bc = [];
-    for (const c of pool) { const s = (m.hunt[c.id] ? 60 : 0) + (m.cop[c.id] ? 30 : 0) + Math.random() * L.noise; if (s > bs) { bs = s; bc = [c]; } }
-    return rnd(bc).id;
+  switch (role) {
+    case 'police': return (best(cands, (c) => (b.checks[c.id] ? -2000 : 0) + S(c), N) || {}).id;
+    case 'spy': return (best(cands, (c) => (b.checks[c.id] || b.known[c.id] ? -2000 : 0) + (claimedRole(room, c.id, 'police') || claimedRole(room, c.id, 'doctor') ? 90 : 0) + trust(c) * 0.1, N) || {}).id;
+    case 'detective': return (best(cands, (c) => S(c), N) || {}).id;
+    case 'doctor': {
+      const credPolice = (c) => (claimedRole(room, c.id, 'police') ? cred(room, p, c.id, 'police') : 0);
+      return (best(cands, (c) => credPolice(c) * 160 + (c.id === p.id ? 25 : 0) + trust(c) * 0.12 + (b.checks[c.id] === 'clean' ? 25 : 0), N) || {}).id;
+    }
+    case 'bodyguard': {
+      return (best(cands, (c) => (claimedRole(room, c.id, 'police') ? cred(room, p, c.id, 'police') * 160 : 0) + (claimedRole(room, c.id, 'doctor') ? 60 : 0) + trust(c) * 0.12, N) || {}).id;
+    }
+    case 'rich': { // 거지는 말도 투표도 못 한다: 조용한 사람부터
+      return (best(cands, (c) => (b.checks[c.id] ? -500 : 0) + (A.talk[c.id] > 0 ? -25 * Math.min(A.talk[c.id], 4) : 40), N) || {}).id;
+    }
+    case 'thug': case 'terrorist': case 'ninja': return (best(cands, (c) => S(c), N) || {}).id;
+    case 'ghost': case 'doppelganger': { // 마피아 팀 보조: 팀원은 피하고 위협적인 사람
+      const pool = cands.filter((c) => !knownMate(p, c));
+      if (role === 'doppelganger') return (best(pool.length ? pool : cands, (c) => trust(c), N) || {}).id;
+      return (best(pool.length ? pool : cands, (c) => killValue(room, p, c), N * 2) || {}).id;
+    }
+    case 'assassin': { const pool = cands.filter((c) => !knownMate(p, c)); return (best(pool.length ? pool : cands, (c) => killValue(room, p, c), N * 2) || {}).id; }
+    case 'destroyer': return (best(cands, (c) => (claimedRole(room, c.id, 'police') ? 150 : 0) + (claimedRole(room, c.id, 'doctor') ? 80 : 0) + trust(c) * 0.15, N * 2) || {}).id;
+    case 'medium': return (best(cands, (c) => (A.dead[c.id] && A.dead[c.id].phase === 'vote' ? 30 : 0) + (b.known[c.id] ? -100 : 0), N * 2) || {}).id;
+    case 'priest': return (best(cands, (c) => (A.dead[c.id] && A.dead[c.id].how === 'mafia' ? 100 : -40) + (claimedRole(room, c.id, 'police') ? 80 : 0) + (claimedRole(room, c.id, 'doctor') ? 50 : 0), N) || {}).id;
+    case 'reporter': return (best(cands, (c) => S(c), N) || {}).id;
+    case 'volunteer': return (best(cands, (c) => trust(c) + (claimedRole(room, c.id, 'police') ? 40 : 0), N) || {}).id;
+    case 'scientist': {
+      if (mode === 'kill') return (best(cands, (c) => S(c), N) || {}).id;
+      return (best(cands, (c) => (claimedRole(room, c.id, 'police') ? cred(room, p, c.id, 'police') * 140 : 0) + (c.id === p.id ? 20 : 0) + trust(c) * 0.1, N) || {}).id;
+    }
+    case 'angel': {
+      if (mode === 'revive') return (best(cands, (c) => (A.dead[c.id] && A.dead[c.id].how === 'mafia' ? 90 : -30) + (claimedRole(room, c.id, 'police') ? 80 : 0), N) || {}).id;
+      return (best(cands, (c) => (claimedRole(room, c.id, 'police') ? cred(room, p, c.id, 'police') * 140 : 0) + (c.id === p.id ? 20 : 0) + trust(c) * 0.1, N) || {}).id;
+    }
+    default: return rnd(cands).id;
   }
-  if (HOSTILE.has(role) || (role === 'scientist' && mode === 'kill')) return best((c) => sus(c));
-  if (FRIENDLY.has(role)) {
-    return best((c) => -sus(c) + (m.cop[c.id] && nCop(room) === 1 ? 40 : 0) + (b.checks[c.id] === 'clean' ? 30 : 0)
-      + (c.id === p.id ? (role === 'doctor' ? 8 : 0) : 0));
-  }
-  if ((role === 'priest' || (role === 'angel' && mode === 'revive')) && room.settings.revealOnDeath) {
-    return best((c) => (c.role && ROLE[c.role].team === 'citizen' ? 50 : 0));
-  }
-  if (role === 'spy' || role === 'detective' || role === 'rich') return best((c) => (b.checks[c.id] ? -50 : 0));
-  return rnd(cands).id;
 }
 
+// 1회용 능력은 쓸 만한 때에만 쓴다
+function worthUsing(room, p, opt) {
+  const L = lv(room, p), A = ai(room);
+  if (!chance(L.once)) return false;
+  if (p.role === 'priest') return room.players.some((x) => !x.alive && !x.destroyed && A.dead[x.id] && A.dead[x.id].how === 'mafia');
+  if (p.role === 'angel') return room.day >= 2 || room.players.some((x) => !x.alive && !x.destroyed);
+  if (p.role === 'scientist') return room.day >= 2;
+  return true;
+}
 function chooseMode(room, p, opt) {
-  const L = lv(room), b = bmem(p);
+  const A = ai(room), b = pm(p);
   const has = (k) => opt.modes.some((x) => x.key === k);
-    if (p.role === 'scientist') {
-    const knownMafia = U.alive(room).some((x) => b.checks[x.id] === 'mafia');
-    if (knownMafia && has('kill')) return 'kill';
-    if (has('heal') && (!has('kill') || chance(0.6))) return 'heal';
-    return opt.modes[0].key;
+  if (p.role === 'scientist') {
+    const topSus = Math.max(...U.alive(room).filter((x) => x !== p).map((x) => sus(room, p, x)), -1000);
+    if (topSus >= 150 && has('kill')) return 'kill';
+    return has('heal') ? 'heal' : opt.modes[0].key;
   }
   if (p.role === 'angel') {
-    const deadOk = room.players.some((x) => !x.alive && !x.destroyed);
-    return deadOk && chance(0.6) ? 'revive' : 'save';
+    const deadOk = room.players.some((x) => !x.alive && !x.destroyed && A.dead[x.id] && A.dead[x.id].how === 'mafia');
+    return deadOk && chance(0.7) ? 'revive' : 'save';
   }
   return opt.mode;
 }
 
 function botNight(room, p) {
-  const L = lv(room);
+  const L = lv(room, p);
+  sync(room, p);
   let opt = E.AB.nightOptions(room, p);
   if (!opt) return;
   if (chance(L.skip)) return;
-  if (ONCE.has(p.role) && !chance(L.once)) return;
+  if (ONCE.has(p.role) && !worthUsing(room, p, opt)) return;
   if (opt.noTarget) { // 미치광이: 능력을 쓸지 말지
     const n = U.alive(room).length;
-    const useIt = chance(n >= 8 ? 0.6 : n >= 5 ? 0.4 : n >= 4 ? 0.25 : 0.1);
-    act(room, p, { type: 'night', target: null, mode: useIt ? 'on' : 'off' });
+    act(room, p, { type: 'night', target: null, mode: chance(n >= 8 ? 0.6 : n >= 5 ? 0.4 : n >= 4 ? 0.25 : 0.1) ? 'on' : 'off' });
     return;
   }
   let mode = opt.mode;
@@ -160,107 +325,341 @@ function botNight(room, p) {
   }
   if (!opt.targets.length) return;
   const id = pickNight(room, p, opt, mode);
+  if (!id) return;
   const body = { type: 'night', target: id, mode };
-  if (opt.text) body.text = rnd(LINES);
-  const okAct = act(room, p, body);
-  if (okAct && U.canAttackAsMafia(room, p)) { const mm = bm(room); (mm.tried = mm.tried || {})[room.day] = id; }
-  if (okAct && (p.role === 'police' || p.role === 'spy')) bmem(p).pending = { id, role: p.role };
+  if (opt.text) body.text = rnd(['누군가 당신을 지켜보고 있어요.', '오늘 낮에 조심하세요.', '당신을 믿어도 될까요?']);
+  const ok = act(room, p, body);
+  const A = ai(room);
+  if (ok && U.canAttackAsMafia(room, p)) { A.tried[room.day] = id; A.lastKill = id; }
+  if (ok && p.role === 'detective') pm(p).detA = id;
 }
 
-// ------------------------------------------------------------ 낮
-function settleChecks(room, p) {
-  const b = bmem(p), L = lv(room);
-  if (!b.pending) return;
-  const t = U.byId(room, b.pending.id); const role = b.pending.role; b.pending = null;
-  if (!t) return;
-  const shown = U.shownRole(t);
-  b.checks[t.id] = shown === 'mafia' ? 'mafia' : 'clean';
-  if (role === 'spy') { if (shown === 'police' || shown === 'doctor') bm(room).hunt[t.id] = true; return; }
-  if (role === 'police' && shown === 'mafia' && L.claim) b.toAnnounce = t.id;
+// ------------------------------------------------------------ 말하기
+const canSpeak = (room, p) => p.alive && E.chatInfo(room, p).ch === 'all';
+const cap = (room) => (U.alive(room).length > 12 ? 3 : 4);
+function say(room, p, text, sem) {
+  const b = pm(p), A = ai(room);
+  if (!canSpeak(room, p)) return false;
+  const used = b.spoke[room.day] || 0;
+  if (used >= cap(room) + 1) return false;
+  if (!act(room, p, { type: 'chat', text })) return false;
+  b.spoke[room.day] = used + 1; b.lastSay = Date.now();
+  record(room, p, sem || {});
+  return true;
+}
+function record(room, p, sem) {
+  const A = ai(room), d = room.day;
+  A.talk[p.id] = (A.talk[p.id] || 0) + 1;
+  if (sem.claim && !A.claims.some((c) => c.by === p.id && c.role === sem.claim)) A.claims.push({ by: p.id, role: sem.claim, day: d });
+  if (sem.res) A.res.push({ by: p.id, target: sem.res.t, res: sem.res.r, day: d });
+  if (sem.acc) A.acc.push({ by: p.id, target: sem.acc, day: d });
+  if (sem.vouch) A.vouch.push({ by: p.id, target: sem.vouch, day: d });
+  if (sem.intent) A.intent[p.id] = { t: sem.intent, day: d };
+  react(room);
 }
 
-function botSay(room, p) {
-  const L = lv(room), m = bm(room), mafia = U.inMafiaChat(p);
-  const others = U.alive(room).filter((x) => x !== p);
-  if (mafia && L.deceive && room.day >= 2 && !bmem(p).faked && chance(0.5)) { // 가짜 경찰 행세
-    const c = others.filter((x) => !U.inMafiaChat(x));
-    if (c.length) { const t = rnd(c); bmem(p).faked = true; addClaim(room, p, t, 'mafia'); return say(room, p, `저는 경찰이에요. ${t.name}님을 조사했는데 마피아였어요!`); }
+// 가장 의심스러운 사람 (나·팀원·정치인 제외)
+function topSuspect(room, p, skipIds) {
+  const L = lv(room, p);
+  const cands = U.alive(room).filter((x) => x !== p && !knownMate(p, x) && !(skipIds && skipIds.includes(x.id)));
+  if (!cands.length) return null;
+  return best(cands, (c) => sus(room, p, c), L.noise * 0.5);
+}
+function reasonFor(room, p, t) {
+  const A = ai(room), b = pm(p);
+  const polRes = A.res.find((r) => r.target === t.id && r.res === 'mafia' && cred(room, p, r.by, 'police') > 0.5);
+  if (polRes) { const by = U.byId(room, polRes.by); return by ? ` 경찰이라는 ${by.name}님의 조사 결과도 있고요.` : ''; }
+  if (A.exposed && A.exposed[t.id]) return ' 경호원이 지키던 사람을 공격한 게 드러났잖아요.';
+  if (claimedRole(room, t.id, 'police') && claimants(room, 'police').length > 1) return ' 경찰이 둘이라는 건 한 명이 거짓말이라는 뜻이에요.';
+  const n = new Set(A.acc.filter((a) => a.target === t.id && a.by !== p.id).map((a) => a.by)).size;
+  if (n >= 2) return ' 여러 사람이 의심하고 있어요.';
+  if (room.day >= 2 && !(A.talk[t.id] > 0)) return ' 계속 말이 없어요.';
+  return '';
+}
+function accuseLine(room, p, t) {
+  return `${rnd([`${t.name}님이 수상해요.`, `저는 ${t.name}님을 의심해요.`, `${t.name}님 행동이 좀 이상하지 않아요?`])}${reasonFor(room, p, t)}`;
+}
+
+// 경찰이 알아낸 결과 공개
+function announcePolice(room, p) {
+  const b = pm(p);
+  const found = Object.keys(b.checks).filter((id) => b.checks[id] === 'mafia' && !b.announced[id] && U.byId(room, id) && U.byId(room, id).alive);
+  if (found.length) {
+    const t = U.byId(room, found[0]); b.announced[t.id] = true; b.claimed.police = true;
+    return say(room, p, `저는 경찰이에요. ${t.name}님을 조사했는데 마피아였어요! ${t.name}님에게 투표해 주세요.`, { claim: 'police', res: { t: t.id, r: 'mafia' }, acc: t.id, intent: t.id });
   }
-  if (chance(0.75) && others.length) {
-    const pool = mafia ? others.filter((x) => !U.inMafiaChat(x)) : others;
-    if (pool.length) {
-      let bs = -1e9, bc = null;
-      for (const c of pool) { const s = suspicion(room, p, c, null) + Math.random() * 6; if (s > bs) { bs = s; bc = c; } }
-      if (bc && (bs > 8 || mafia)) {
-        if (L.listen) m.sus[bc.id] = (m.sus[bc.id] || 0) + 3; // 말이 퍼지면 다른 봇도 조금 의심
-        const why = (m.vsus && m.vsus[bc.id]) ? ' 지난번에 시민을 처형하자고 했었잖아요.' : (m.acc && Object.values(m.acc).some((o) => o[bc.id]) ? ' 다른 분들도 의심하고 있어요.' : '');
-        return say(room, p, `${bc.name}님이 수상해요.${why} 투표를 고려해 봐요.`);
+  return false;
+}
+// 위협받을 때 경찰이 깨끗한 사람들도 밝힌다
+function revealCleans(room, p) {
+  const b = pm(p);
+  const clean = Object.keys(b.checks).filter((id) => b.checks[id] === 'clean' && U.byId(room, id) && U.byId(room, id).alive);
+  if (b.claimed.cleans || !clean.length) return false;
+  b.claimed.cleans = true; b.claimed.police = true;
+  const list = clean.map((id) => U.byId(room, id));
+  const ok = say(room, p, `저는 경찰이에요! 제가 조사한 ${names(list)}님은 마피아가 아니에요. 저를 처형하면 시민이 손해예요.`, { claim: 'police' });
+  if (ok) for (const t of list) record(room, p, { res: { t: t.id, r: 'clean' } });
+  return ok;
+}
+// 마피아 팀의 가짜 경찰 (맞불 포함)
+function fakePolice(room, p, againstId) {
+  const b = pm(p), A = ai(room);
+  if (b.fakeDay === room.day || claimedRole(room, p.id, 'police')) return false;
+  const pool = U.alive(room).filter((x) => x !== p && !knownMate(p, x));
+  if (!pool.length) return false;
+  let t = againstId ? U.byId(room, againstId) : null;
+  if (!t || !t.alive) t = best(pool, (c) => sus(room, p, c), 6); // 마을이 이미 의심하는 사람을 지목하면 표가 모인다
+  if (!t) return false;
+  b.fakeDay = room.day;
+  const line = againstId ? `제가 진짜 경찰이에요! ${t.name}님이야말로 가짜예요. 저는 ${t.name}님을 조사했는데 마피아가 나왔어요.` : `저는 경찰이에요. ${t.name}님을 조사했는데 마피아였어요!`;
+  return say(room, p, line, { claim: 'police', res: { t: t.id, r: 'mafia' }, acc: t.id, intent: t.id });
+}
+// 진짜 직업 공개(위협받을 때)
+function claimRealRole(room, p) {
+  const b = pm(p);
+  if (b.claimed.role) return false;
+  const r = p.role;
+  if (!CLAIMABLE.includes(r) || r === 'reporter' || r === 'medium') return false;
+  b.claimed.role = true;
+  const txt = { police: '저는 경찰이에요.', doctor: '저는 의사예요. 저를 처형하면 치료할 사람이 없어져요.', soldier: '저는 군인이에요. 마피아가 쏴도 한 번은 버텨요.', politician: '저는 정치인이에요. 투표로는 못 죽여요.', bodyguard: '저는 경호원이에요.', detective: '저는 탐정이에요.' }[r];
+  return say(room, p, txt, { claim: r });
+}
+function underFire(room, p) {
+  const A = ai(room);
+  const n = new Set(A.acc.filter((a) => a.target === p.id && a.by !== p.id && a.day === room.day).map((a) => a.by)).size;
+  const tl = tallyOf(room)[p.id] || 0;
+  return { acc: n, tally: tl, hot: n >= 2 || tl >= 2 };
+}
+// 지목당했을 때 반박 (하루에 두 번까지만, 같은 말은 되풀이하지 않는다)
+function defend(room, p, accuserId) {
+  const L = lv(room, p), b = pm(p), A = ai(room), acc = U.byId(room, accuserId);
+  if (!acc || !acc.alive) return false;
+  b.replied[accuserId + ':' + room.day] = true;
+  b.defCount = b.defCount || {};
+  if ((b.defCount[room.day] || 0) >= 2) return false;
+  b.defCount[room.day] = (b.defCount[room.day] || 0) + 1;
+  const fire = underFire(room, p);
+  const policeHit = A.res.find((r) => r.target === p.id && r.res === 'mafia' && r.by === acc.id && claimedRole(room, acc.id, 'police'));
+  if (p.role === 'police' && fire.hot && revealCleans(room, p)) return true;
+  if (p.role === 'police' && policeHit && acc.id !== p.id && !b.announced['liar' + acc.id]) {
+    b.announced['liar' + acc.id] = true; b.claimed.police = true;
+    return say(room, p, `제가 진짜 경찰이에요! ${acc.name}님이야말로 가짜예요. 저를 처형하면 마피아만 좋아해요.`, { claim: 'police', acc: acc.id, res: { t: acc.id, r: 'mafia' } });
+  }
+  // 마피아 팀: 경찰이라는 사람이 나를/팀을 지목하면 가짜 경찰로 맞선다
+  if (mafiaSide(p) && L.counter && policeHit && !claimedRole(room, p.id, 'police') && fakePolice(room, p, acc.id)) return true;
+  if (mafiaSide(p) && fire.hot && L.fake && chance(0.6) && !claimedRole(room, p.id, 'police') && claimants(room, 'police').length === 0 && fakePolice(room, p)) return true;
+  if (fire.hot && !mafiaSide(p) && L.think >= 0.9 && claimRealRole(room, p)) return true;
+  const counter = topSuspect(room, p, [acc.id]);
+  b.usedLines = b.usedLines || {};
+  const lines = [`저는 마피아가 아니에요. ${acc.name}님은 왜 저를 의심하죠?`, `${acc.name}님, 근거가 있나요? 저는 시민이에요.`, `제가 마피아라면 이렇게 가만히 있었겠어요? ${acc.name}님이 더 수상해요.`, `${acc.name}님, 저를 몰아가기 전에 다른 단서부터 따져봐요.`]
+    .filter((t) => !b.usedLines[t]);
+  let text = lines.length ? rnd(lines) : `${acc.name}님, 저는 아니에요.`;
+  b.usedLines[text] = true;
+  if (counter && L.think >= 0.7 && chance(0.5)) text += ` 저는 오히려 ${counter.name}님이 신경 쓰여요.`;
+  return say(room, p, text, counter && L.think >= 0.7 && text.includes(counter.name) ? { acc: counter.id } : {});
+}
+
+// 새 발언이 나올 때마다: 지목당한 봇의 반박, 마피아의 맞불
+function react(room) {
+  if (room.phase !== 'day' && room.phase !== 'vote') return;
+  const A = ai(room), seq = room.seq, L = lv(room);
+  for (const p of aliveBots(room)) {
+    const b = pm(p), Lp = lv(room, p);
+    const hit = A.acc.find((a) => a.target === p.id && a.day === room.day && a.by !== p.id && !b.replied[a.by + ':' + room.day]);
+    if (hit && !b.pend) {
+      b.pend = true; b.replied[hit.by + ':' + room.day] = 'pending';
+      const accuser = hit.by;
+      setTimeout(() => {
+        b.pend = false;
+        if (room.seq !== seq || !deps.rooms.has(room.code) || !p.alive) return;
+        try { if (chance(Lp.defend)) defend(room, p, accuser); } catch (e) { console.error('봇 오류', e); }
+      }, delayMs(room, 0.02, 0.055));
+    }
+  }
+  { // 경찰 주장이 마피아 팀원을 지목하면 맞불
+    const mafias = aliveBots(room).filter((x) => mafiaSide(x) && U.inMafiaChat(x) && lv(room, x).counter);
+    if (!mafias.length) return;
+    for (const r of A.res) {
+      if (r.res !== 'mafia' || r.day !== room.day || A.counterDone && A.counterDone[r.by + ':' + room.day]) continue;
+      const by = U.byId(room, r.by), t = U.byId(room, r.target);
+      if (!by || !t || !by.alive || !t.alive || mafias.some((m) => m.id === by.id)) continue;
+      const hitsTeam = mafias.some((m) => m.id === t.id) || (t.alive && mafias.some((m) => knownMate(m, t)));
+      if (!hitsTeam) continue;
+      if (mafias.some((m) => claimedRole(room, m.id, 'police'))) continue;
+      A.counterDone = A.counterDone || {}; A.counterDone[by.id + ':' + room.day] = true;
+      const who = mafias.find((m) => m.id === t.id) || rnd(mafias);
+      setTimeout(() => {
+        if (room.seq !== seq || !deps.rooms.has(room.code) || !who.alive) return;
+        try { fakePolice(room, who, by.id); } catch (e) { console.error('봇 오류', e); }
+      }, delayMs(room, 0.025, 0.07));
+      break;
+    }
+  }
+}
+
+// 사람이 한 말 읽기
+function hear(room, m) {
+  const L = lv(room);
+  const sp = U.byId(room, m.from); if (!sp || !sp.alive) return;
+  const text = m.text, A = ai(room);
+  A.talk[sp.id] = (A.talk[sp.id] || 0) + 1;
+  if (L.think < 0.5) return;
+  const others = room.players.filter((q) => q.id !== sp.id && text.includes(q.name));
+  const neg = /아니|않|없/.test(text);
+  const accuse = /마피아|의심|수상|범인|처형|죽여|죽이/.test(text) && !(neg && /시민/.test(text));
+  const vouch = /시민|믿|무고|확실|안전|깨끗/.test(text);
+  const iAm = '(저는|제가|내가|나는|난|저 |전 )';
+  const rec = {};
+  for (const r of CLAIMABLE) { if (new RegExp(iAm + '\\s*' + ROLE[r].name).test(text)) { rec.claim = r; break; } }
+  if (rec.claim && !A.claims.some((c) => c.by === sp.id && c.role === rec.claim)) A.claims.push({ by: sp.id, role: rec.claim, day: room.day });
+  for (const q of others) {
+    if (rec.claim === 'police') {
+      const isM = /마피아(였|입|이에요|야|다|로)/.test(text) && !/아니/.test(text);
+      const isC = /(시민|깨끗|마피아가 아니|마피아 아니)/.test(text);
+      if (isM || isC) A.res.push({ by: sp.id, target: q.id, res: isM ? 'mafia' : 'clean', day: room.day });
+    }
+    if (accuse && !vouch) A.acc.push({ by: sp.id, target: q.id, day: room.day });
+    else if (vouch && !accuse) A.vouch.push({ by: sp.id, target: q.id, day: room.day });
+  }
+  if (others.length === 1 && /투표|처형/.test(text) && !/하지 ?마|안 ?할/.test(text)) A.intent[sp.id] = { t: others[0].id, day: room.day };
+  react(room);
+}
+
+// 말할 거리가 없으면 상황에 맞는 말을 하되, 같은 말을 되풀이하지 않는다
+function contextLine(room, p) {
+  const A = ai(room), b = pm(p);
+  b.usedLines = b.usedLines || {};
+  const alive = U.alive(room);
+  const pool = [];
+  const lastDead = Object.entries(A.dead).filter(([, d]) => d.day === room.day - (room.phase === 'day' ? 0 : 0) && d.phase === 'night').map(([id]) => U.byId(room, id)).filter(Boolean);
+  if (lastDead.length && room.day >= 1) pool.push(`${lastDead[0].name}님이 밤에 당했네요. 마피아가 그분을 노린 이유가 뭘까요?`);
+  const pc = claimants(room, 'police');
+  if (pc.length >= 2) pool.push('경찰이 둘이라는 건 한 명이 거짓말이라는 뜻이에요. 누가 진짜인지 따져봐요.');
+  if (pc.length === 1 && U.byId(room, pc[0]) && U.byId(room, pc[0]).alive && pc[0] !== p.id) pool.push('경찰이 나왔으니 그분 말을 잘 들어봐야겠어요.');
+  pool.push(`지금 ${alive.length}명 남았어요. 한 번 실수하면 위험하니까 신중하게 가요.`);
+  if (room.day === 1) pool.push(...FILLERS);
+  else pool.push('말이 없는 사람이 누군지 살펴보고 있어요.', '단서가 부족해요. 확실한 근거가 있을 때 투표해요.');
+  const fresh = pool.filter((t) => !b.usedLines[t]);
+  if (!fresh.length) return null;
+  const t = rnd(fresh); b.usedLines[t] = true;
+  return t;
+}
+function botSpeak(room, p) {
+  const L = lv(room, p), b = pm(p), A = ai(room);
+  if (!canSpeak(room, p)) return;
+  sync(room, p);
+  if (p.role === 'police') { if (announcePolice(room, p)) return; }
+  const fire = underFire(room, p);
+  if (fire.hot) {
+    if (p.role === 'police' && revealCleans(room, p)) return;
+    if (!mafiaSide(p) && L.think >= 0.9 && claimRealRole(room, p)) return;
+    if (mafiaSide(p) && L.fake && !claimedRole(room, p.id, 'police') && claimants(room, 'police').length === 0 && chance(0.7) && fakePolice(room, p)) return;
+  }
+  // 진짜 경찰은 가짜 경찰을 알아본다
+  if (p.role === 'police' && L.think >= 0.7) {
+    const liar = claimants(room, 'police').map((id) => U.byId(room, id)).find((x) => x && x.alive && x !== p && !b.announced['liar' + x.id]);
+    if (liar) { b.announced['liar' + liar.id] = true; b.claimed.police = true; return void say(room, p, `제가 진짜 경찰이에요. ${liar.name}님은 경찰이 아니에요. 거짓말하고 있어요!`, { claim: 'police', acc: liar.id, res: { t: liar.id, r: 'mafia' } }); }
+  }
+  // 마피아 팀은 가끔 먼저 가짜 경찰을 내세워 판을 흔든다 (보통은 진짜 경찰이 나온 뒤 맞불)
+  if (mafiaSide(p) && L.fake && room.day >= 3 && claimants(room, 'police').length === 0 && chance(0.12) && fakePolice(room, p)) return;
+  // 지목
+  const t = topSuspect(room, p);
+  if (t && chance(0.8)) {
+    const sc = sus(room, p, t);
+    if (sc > (L.think >= 0.9 ? 12 : 8)) {
+      const same = b.lastTop === t.id && b.lastTopDay === room.day;
+      if (same) {
+        if (b.intentSaid !== room.day && chance(L.intent)) { b.intentSaid = room.day; return void say(room, p, `이번엔 ${t.name}님에게 투표할 거예요.`, { intent: t.id }); }
+      } else {
+        b.lastTop = t.id; b.lastTopDay = room.day;
+        return void say(room, p, accuseLine(room, p, t), { acc: t.id });
       }
     }
   }
-  return say(room, p, rnd(LINES));
+  const line = contextLine(room, p);
+  if (line) say(room, p, line);
 }
 
 // ------------------------------------------------------------ 투표
-function botVote(room, p) {
-  const L = lv(room), m = bm(room);
-  const vo = E.AB.voteOptions(room, p);
-  if (vo && vo.targets.length && chance(0.7)) {
-    const cands = vo.targets.map((id) => U.byId(room, id)).filter(Boolean);
-    let pool = cands;
-    if (U.inMafiaChat(p)) { const non = cands.filter((c) => !U.inMafiaChat(c)); if (non.length) pool = non; }
-    act(room, p, { type: 'vact', target: rnd(pool).id });
+function tallyOf(room) {
+  const t = {};
+  for (const [vid, tid] of Object.entries(room.votes)) {
+    if (tid === 'skip') continue;
+    const v = U.byId(room, vid); if (!v) continue;
+    t[tid] = (t[tid] || 0) + E.weight(v);
   }
+  return t;
+}
+function botVoteAbility(room, p) {
+  const vo = E.AB.voteOptions(room, p); if (!vo || !vo.targets.length) return;
+  const cands = vo.targets.map((id) => U.byId(room, id)).filter(Boolean), b = pm(p);
+  let t;
+  if (p.role === 'detective') { // 믿을 만한 사람과 비교
+    const ref = best(cands, (c) => -sus(room, p, c) + (b.checks[c.id] === 'clean' ? 100 : 0), 2);
+    t = ref;
+  } else t = best(cands.filter((c) => !b.checks[c.id]), (c) => sus(room, p, c), lv(room, p).noise) || rnd(cands); // 밀고자: 의심스러운 사람
+  if (t) act(room, p, { type: 'vact', target: t.id });
+}
+function botVote(room, p) {
+  const L = lv(room, p), A = ai(room);
+  sync(room, p);
+  botVoteAbility(room, p);
   if (!E.canVote(room, p)) return;
   if (chance(L.skip)) return void act(room, p, { type: 'vote', target: 'skip' });
   const tally = tallyOf(room);
-  const mafia = U.inMafiaChat(p);
   const alive = U.alive(room);
-  let cands = alive.filter((x) => x !== p);
+  const mates = alive.filter((x) => knownMate(p, x));
+  let cands = alive.filter((x) => x !== p && !immune(room, x));
+  if (!room.settings.selfVote) { /* 자신 제외 이미 */ }
   if (!cands.length) return;
-  if (mafia && !chance(L.mistake)) {
-    if (L.sacrifice) { // 팀원이 곧 처형될 게 확실하면 같이 투표해서 의심을 피한다
-      const need = Math.ceil(alive.filter((x) => E.canVote(room, x)).length / 2);
-      const lead = cands.filter((c) => U.inMafiaChat(c) && (tally[c.id] || 0) >= need).sort((a, b) => (tally[b.id] || 0) - (tally[a.id] || 0))[0];
-      if (lead) return void act(room, p, { type: 'vote', target: lead.id });
-    }
-    const non = cands.filter((c) => !U.inMafiaChat(c));
-    if (non.length) cands = non;
-    if (L.follow) { // 이미 팀원이 찍은 대상이 있으면 같이 찍어 표를 모은다
-      const tv = {};
-      for (const [vid, tid] of Object.entries(room.votes)) {
-        const vv = U.byId(room, vid);
-        if (vv && vv !== p && U.inMafiaChat(vv) && cands.some((c) => c.id === tid)) tv[tid] = (tv[tid] || 0) + 1;
+  const voters = alive.filter((x) => E.canVote(room, x)).length;
+  const need = Math.floor(voters / 2) + 1;
+
+  if (mafiaSide(p)) {
+    if (!chance(L.mistake)) {
+      if (L.sacrifice && mates.length) { // 팀원이 어차피 처형된다면 같이 찍어서 의심을 피한다
+        const lead = mates.filter((c) => (tally[c.id] || 0) >= need - 1 && (tally[c.id] || 0) >= 2).sort((a, b) => (tally[b.id] || 0) - (tally[a.id] || 0))[0];
+        if (lead && (tally[lead.id] || 0) >= need) return void act(room, p, { type: 'vote', target: lead.id });
       }
-      const top = Object.entries(tv).sort((a, b) => b[1] - a[1])[0];
-      if (top) return void act(room, p, { type: 'vote', target: top[0] });
+      const non = cands.filter((c) => !knownMate(p, c));
+      if (non.length) cands = non;
+    }
+    if (L.coord) { // 팀의 계획: 팀원이 이미 찍은 대상이 있으면 같이 찍는다
+      const pl = A.plan['v' + room.day];
+      if (pl && cands.some((c) => c.id === pl)) return void act(room, p, { type: 'vote', target: pl });
     }
   }
-  let bs = -1e9, bc = [];
-  for (const c of cands) {
-    let s = suspicion(room, p, c, tally) + Math.random() * L.noise;
-    if (mafia) {
-      if (L.threat && m.cop[c.id]) s += 40;
-      for (const cl of m.claims) { const by = U.byId(room, cl.by); if (cl.target === c.id && cl.result === 'mafia' && by && U.inMafiaChat(by)) s += 30; }
+  // 기권 판단: 단서가 너무 없으면 괜한 처형을 피한다 (마을 팀)
+  const scored = cands.map((c) => ({ c, s: sus(room, p, c, { tally }) + Math.random() * L.noise }));
+  scored.sort((a, b) => b.s - a.s);
+  let top = scored[0];
+  if (mafiaSide(p)) { // 마피아는 마을이 쏠리는 쪽 + 위협적인 사람
+    let bs = -1e9;
+    for (const x of scored) { const v = x.s * 0.6 + killValue(room, p, x.c) * 0.5 + (tally[x.c.id] || 0) * 6; if (v > bs) { bs = v; top = x; } }
+    if (L.coord && !A.plan['v' + room.day]) A.plan['v' + room.day] = top.c.id;
+  } else {
+    // 마을은 표가 갈라지면 마피아가 원하는 사람이 처형된다: 단서가 약해도 가장 의심스러운 사람에게 표를 모은다
+    if (L.consensus > 0 && chance(L.consensus)) {
+      const lead = Object.entries(tally).sort((a, b) => b[1] - a[1])[0];
+      if (lead && lead[1] >= 2) { const lc = scored.find((x) => x.c.id === lead[0]); if (lc && lc.s >= top.s - 40) top = lc; }
     }
-    if (s > bs) { bs = s; bc = [c]; } else if (s === bs) bc.push(c);
   }
-  act(room, p, { type: 'vote', target: rnd(bc).id });
+  act(room, p, { type: 'vote', target: top.c.id });
 }
 
 // ------------------------------------------------------------ 단계 시작 시 호출
 function schedule(room) {
   const seq = room.seq, phase = room.phase, L = lv(room);
+  try { syncSys(room); } catch (e) { console.error('봇 오류', e); }
   if (phase === 'last') { // 처형된 테러리스트(봇)가 함께 죽을 사람을 고른다
     const T = U.byId(room, room.lastBoom);
     if (T && T.bot) {
       setTimeout(() => {
         if (room.seq !== seq || !deps.rooms.has(room.code) || room.lastBoom !== T.id) return;
         try {
-          const cands = U.alive(room).filter((x) => x !== T);
-          let bs = -1e9, bc = null;
-          for (const c of cands) { const s = suspicion(room, T, c, null) + Math.random() * L.noise; if (s > bs) { bs = s; bc = c; } }
-          act(room, T, { type: 'boom', target: bc ? bc.id : null });
+          const cands = U.alive(room).filter((x) => x !== T && !knownMate(T, x));
+          const c = best(cands.length ? cands : U.alive(room).filter((x) => x !== T), (x) => sus(room, T, x), L.noise);
+          act(room, T, { type: 'boom', target: c ? c.id : null });
         } catch (e) { console.error('봇 오류', e); }
       }, 1500 + Math.random() * 4000);
     }
@@ -269,58 +668,41 @@ function schedule(room) {
   const sec = phase === 'night' ? room.settings.nightSec : phase === 'day' ? room.settings.daySec : room.settings.voteSec;
   for (const p of room.players) {
     if (!p.bot || !p.alive) continue;
+    const L = lv(room, p);
     const at = (a, b, fn) => setTimeout(() => {
       if (room.seq !== seq || !deps.rooms.has(room.code) || !p.alive) return;
       try { fn(); } catch (e) { console.error('봇 오류', e); }
     }, 300 + (a + Math.random() * (b - a)) * sec * 1000);
     if (phase === 'night') at(0.1, 0.75, () => botNight(room, p));
     else if (phase === 'day') {
-      settleChecks(room, p);
-      const b = bmem(p);
-      if (b.toAnnounce) {
-        const t = U.byId(room, b.toAnnounce); b.toAnnounce = null;
-        if (t && t.alive) at(0.05, 0.3, () => { addClaim(room, p, t, 'mafia'); say(room, p, `저는 경찰이에요. ${t.name}님을 조사했는데 마피아였어요!`); });
-      } else if (chance(L.speak)) at(0.1, 0.9, () => { if (E.chatInfo(room, p).ch === 'all') botSay(room, p); });
-    } else if (phase === 'vote') at(0.15, 0.85, () => botVote(room, p));
+      syncPriv(room, p);
+      if (p.role === 'police') at(0.02, 0.15, () => { sync(room, p); announcePolice(room, p); }); // 마피아를 찾았다면 아침 일찍 알린다
+      const n = Math.max(1, Math.round(L.speak * (room.day === 1 ? 2.2 : 3.2) * (U.alive(room).length > 12 ? 0.7 : 1)));
+      const slots = Array.from({ length: n }, () => 0.04 + Math.random() * 0.86).sort((a, b) => a - b);
+      slots.forEach((f, i) => at(f, f, () => botSpeak(room, p)));
+      if (chance(L.intent)) at(0.88, 0.97, () => { // 하루 끝에 투표 예고
+        const t = topSuspect(room, p);
+        if (t && sus(room, p, t) > 15 && pm(p).intentSaid !== room.day) { pm(p).intentSaid = room.day; say(room, p, `오늘은 ${t.name}님에게 투표할게요.`, { intent: t.id }); }
+      });
+    } else if (phase === 'vote') at(0.2, 0.85, () => botVote(room, p));
   }
 }
 
-// 죽은 사람의 직업이 공개되면 거기서 단서를 얻는다 (직업 공개 설정이 켜진 경우에만)
+// 밤/투표 결과를 반영 (죽음 기록은 onDeath 에서)
 function afterResolve(room, beforeIds, voteSnap) {
-  const m = bm(room); m.vsus = m.vsus || {}; m.fail = m.fail || {};
-  if (!voteSnap) { // 밤: 마피아가 노렸는데 아무도 죽지 않았다면, 그 대상은 공격이 안 통하는 사람일 수 있다
-    const t = m.tried && m.tried[room.day];
+  const A = ai(room);
+  if (!voteSnap) { // 밤: 마피아가 노렸는데 아무도 죽지 않았다면 그 대상은 공격이 안 통하는 사람일 수 있다
+    const t = A.tried[room.day];
     const anyDied = beforeIds.some((id) => { const d = U.byId(room, id); return d && !d.alive; });
-    if (t) { if (!anyDied) m.fail[t] = (m.fail[t] || 0) + 1; else m.fail[t] = 0; }
-  }
-  if (!room.settings.revealOnDeath) return;
-  for (const id of beforeIds) {
-    const d = U.byId(room, id); if (!d || d.alive || !d.role) continue;
-    const team = ROLE[d.role].team;
-    if (voteSnap) {
-      for (const [vid, tid] of Object.entries(voteSnap)) {
-        if (tid !== d.id) continue;
-        if (team === 'citizen') { m.sus[vid] = (m.sus[vid] || 0) + 22; m.vsus[vid] = 1; }
-        else if (team === 'mafia') m.sus[vid] = (m.sus[vid] || 0) - 14;
-      }
-    }
-    for (const cl of m.claims) { // 죽은 사람이 한 경찰 주장의 진위가 드러남
-      if (cl.by !== d.id) continue;
-      const t = U.byId(room, cl.target); if (!t) continue;
-      if (d.role === 'police') m.sus[t.id] = (m.sus[t.id] || 0) + (cl.result === 'mafia' ? 90 : -40);
-      else m.sus[t.id] = (m.sus[t.id] || 0) + (cl.result === 'mafia' ? -25 : 10);
-    }
-    m.claims = m.claims.filter((cl) => cl.by !== d.id);
-    delete m.cop[d.id];
+    if (t) A.fail[t] = anyDied ? 0 : (A.fail[t] || 0) + 1;
   }
 }
-
-// 누군가 죽을 때마다 호출: 죽은 사람은 더 이상 경찰 후보로 치지 않는다
-function onDeath(room, p) {
-  if (!room.bm) return;
-  delete room.bm.cop[p.id];
+// 누군가 죽을 때마다 호출
+function onDeath(room, p, how) {
+  const A = ai(room);
+  const h = String(how || '');
+  A.dead[p.id] = { day: room.day, phase: room.phase, how: h.includes('마피아에게') ? 'mafia' : h.includes('투표로') ? 'vote' : 'other' };
+  if (room.settings.revealOnDeath) A.pubRole[p.id] = p.role;
 }
-
-function reset(room) { room.bm = null; for (const p of room.players) p.b = null; }
 
 module.exports = { init, schedule, hear, reset, afterResolve, onDeath, LEVEL_KEYS };

@@ -7,13 +7,14 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
-const { ROLES, ROLE, TEAM_NAMES } = require('./roles');
+const { ROLES, ROLE, TEAM_NAMES, roleCap } = require('./roles');
 const E = require('./engine');
 const { U } = E;
 const Bots = require('./bots');
 
 const PORT = Number(process.env.PORT) || 3000;
 const QUIET_LIMIT = 6;
+const TIME_ADJ_MS = 10000; // 아침 시간 조절 한 번에 바뀌는 시간
 const LAST_SEC = 15; // 처형된 테러리스트가 함께 죽을 사람을 고르는 시간
 // 어떤 오류가 나도 서버 전체가 꺼지지 않게 한다 (한 방의 오류가 모두의 접속을 끊지 않도록)
 process.on('uncaughtException', (e) => console.error('[오류]', e && e.stack || e));
@@ -44,6 +45,8 @@ const roleName = (k) => ROLE[k].name;
 
 // ---------------------------------------------------------------- 설정
 function defaultSettings() {
+  const roleMin = {}, roleMax = {};
+  for (const r of ROLES) { roleMin[r.key] = 0; roleMax[r.key] = (r.key === 'mafia' || r.key === 'citizen') ? roleCap(r.key) : 1; }
   return {
     nightSec: 40,
     daySec: 90,
@@ -51,11 +54,13 @@ function defaultSettings() {
     mafiaSpecialMax: 2,
     citizenSpecialMax: 12,
     neutralMax: 2,
-    revealOnDeath: true,
+    revealOnDeath: false,
+    jokerReveal: false,
     botLevel: 'normal',
     selfVote: true,
     forcedRoles: [],
-    enabledRoles: ROLES.filter((r) => !r.fixed).map((r) => r.key),
+    enabledRoles: ROLES.map((r) => r.key),
+    roleMin, roleMax,
   };
 }
 function applySettings(s, patch) {
@@ -63,17 +68,41 @@ function applySettings(s, patch) {
     if (patch[k] !== undefined) s[k] = clamp(patch[k], LIMITS[k], s[k]);
   }
   if (patch.revealOnDeath !== undefined) s.revealOnDeath = !!patch.revealOnDeath;
+  if (patch.jokerReveal !== undefined) s.jokerReveal = !!patch.jokerReveal;
   if (Bots.LEVEL_KEYS.includes(patch.botLevel)) s.botLevel = patch.botLevel;
   if (patch.selfVote !== undefined) s.selfVote = !!patch.selfVote;
-  const ok = new Set(ROLES.filter((r) => !r.fixed).map((r) => r.key));
+  const ok = new Set(ROLES.map((r) => r.key));
   const clean = (l) => [...new Set(l)].filter((k) => ok.has(k));
   const prevEn = s.enabledRoles.slice(), prevFo = s.forcedRoles.slice();
-  const hasEnabledPatch = Array.isArray(patch.enabledRoles), hasForcedPatch = Array.isArray(patch.forcedRoles);
-  if (hasEnabledPatch) s.enabledRoles = fixPair(clean(patch.enabledRoles), prevEn);
-  if (hasForcedPatch) {
-    s.forcedRoles = fixPair(clean(patch.forcedRoles), prevFo);
-    for (const k of s.forcedRoles) if (!s.enabledRoles.includes(k)) s.enabledRoles.push(k); // 필수 지정하면 자동으로 사용 설정
-  } else if (hasEnabledPatch) s.forcedRoles = s.forcedRoles.filter((k) => s.enabledRoles.includes(k));
+  const enable = (k) => { if (!s.enabledRoles.includes(k)) s.enabledRoles.push(k); };
+  // 거지·부자는 한 묶음이라 값을 항상 같이 바꾼다
+  const mates = (k) => (k === 'beggar' || k === 'rich' ? ['beggar', 'rich'] : [k]);
+  if (Array.isArray(patch.enabledRoles)) {
+    s.enabledRoles = fixPair(clean(patch.enabledRoles), prevEn);
+    for (const k of prevEn) if (!s.enabledRoles.includes(k)) s.roleMin[k] = 0; // 끄면 필수도 해제
+  }
+  if (Array.isArray(patch.forcedRoles)) { // ⭐ 필수 = 최소 1명
+    const fo = fixPair(clean(patch.forcedRoles), prevFo);
+    for (const k of fo) if (!prevFo.includes(k)) { s.roleMin[k] = Math.max(1, s.roleMin[k] | 0); if (s.roleMax[k] < s.roleMin[k]) s.roleMax[k] = s.roleMin[k]; enable(k); }
+    for (const k of prevFo) if (!fo.includes(k)) s.roleMin[k] = 0;
+  }
+  const num = (k, v) => clamp(v, [0, roleCap(k)], null);
+  if (patch.roleMin && typeof patch.roleMin === 'object') {
+    for (const [k0, v] of Object.entries(patch.roleMin)) {
+      if (!ok.has(k0) || k0 === 'rich') continue;
+      const n = num(k0, v); if (n === null) continue;
+      for (const k of mates(k0)) { s.roleMin[k] = n; if (s.roleMax[k] < n) s.roleMax[k] = n; if (n > 0) enable(k); }
+    }
+  }
+  if (patch.roleMax && typeof patch.roleMax === 'object') {
+    for (const [k0, v] of Object.entries(patch.roleMax)) {
+      if (!ok.has(k0) || k0 === 'rich') continue;
+      const n = num(k0, v); if (n === null) continue;
+      for (const k of mates(k0)) { s.roleMax[k] = n; if (s.roleMin[k] > n) s.roleMin[k] = n; }
+    }
+  }
+  // 필수 목록은 "최소 1명 이상"인 직업으로 항상 맞춰 둔다
+  s.forcedRoles = ROLES.map((r) => r.key).filter((k) => s.enabledRoles.includes(k) && s.roleMin[k] >= 1);
 }
 // 거지와 부자는 "거지 & 부자" 한 묶음: 한쪽만 바뀌어 오면 이전 상태를 보고 둘 다 켜거나 둘 다 끈다
 function fixPair(list, prev) {
@@ -135,6 +164,12 @@ function killPlayer(room, p, how) {
   const rev = room.settings.revealOnDeath ? ` (직업: ${roleName(p.role)})` : '';
   addChat(room, 'sys', `💀 ${p.name}님이 ${how}${rev}`);
   Bots.onDeath(room, p, how);
+  // 거지와 부자는 운명공동체: 한쪽이 죽으면 다른 쪽도 함께 죽는다
+  if (p.role === 'beggar' || p.role === 'rich') {
+    const mateRole = p.role === 'beggar' ? 'rich' : 'beggar';
+    const mate = room.players.find((x) => x.alive && x !== p && x.role === mateRole);
+    if (mate) killPlayer(room, mate, `짝인 ${roleName(p.role)} ${p.name}님이 죽어서 함께 사망했습니다. (거지와 부자는 운명공동체)`);
+  }
 }
 // 엔진이 쓰는 출력 함수 연결
 U.io.sys = (room, text) => addChat(room, 'sys', text);
@@ -233,6 +268,7 @@ function startGame(room) {
   room.day = 1; room.winner = null; room.votes = {}; room.voteActs = {};
   addChat(room, 'sys', '🎭 게임이 시작되었습니다! 직업이 배정되었어요.');
   if (skipped && skipped.length) addChat(room, 'sys', `⚠ 인원이 부족해 필수 직업 중 ${skipped.map(roleName).join(', ')}은(는) 이번 판에 넣지 못했어요.`);
+  for (const t of room.assignNotes || []) addChat(room, 'sys', t);
   for (const p of room.players) {
     U.priv(room, p, `🎭 당신의 직업은 "${roleName(p.role)}" (${TEAM_NAMES[ROLE[p.role].team]}) 입니다.`);
     if (U.inMafiaChat(p)) {
@@ -452,7 +488,7 @@ function handleAction(room, p, b) {
       room.dayAdj[p.id] = b.dir;
       const now = Date.now();
       const before = room.endsAt;
-      room.endsAt = b.dir === 'short' ? Math.max(now + 1000, room.endsAt - 5000) : room.endsAt + 5000;
+      room.endsAt = b.dir === 'short' ? Math.max(now + 1000, room.endsAt - TIME_ADJ_MS) : room.endsAt + TIME_ADJ_MS;
       clearTimeout(room.timer);
       const seq = room.seq;
       room.timer = setTimeout(() => { if (room.seq === seq) safeAdvance(room); }, Math.max(0, room.endsAt - now));
@@ -522,7 +558,7 @@ const server = http.createServer(async (req, res) => {
     }
     if (route === 'GET /healthz') return json(res, 200, { ok: true, rooms: rooms.size });
     if (route === 'GET /api/meta') {
-      return json(res, 200, { roles: ROLES, teams: TEAM_NAMES, limits: LIMITS, min: MIN_PLAYERS, max: MAX_PLAYERS });
+      return json(res, 200, { roles: ROLES, teams: TEAM_NAMES, limits: LIMITS, caps: Object.fromEntries(ROLES.map((r) => [r.key, roleCap(r.key)])), min: MIN_PLAYERS, max: MAX_PLAYERS });
     }
     if (route === 'GET /api/check') {
       const { p } = auth(url.searchParams.get('code'), url.searchParams.get('token'));
