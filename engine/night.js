@@ -1,6 +1,6 @@
 'use strict';
 // 밤 시작 / 밤 결과 처리
-const { ROLE, LOANABLE } = require('../roles');
+const { ROLE, ROLES, LOANABLE } = require('../roles');
 const U = require('./util');
 const AB = require('./abilities');
 
@@ -33,14 +33,52 @@ function copyRoleNote(room, p, role) {
   U.priv(room, p, `🎭 당신의 직업은 이제 "${U.roleName(role)}"입니다! (${ROLE[role].desc})`);
 }
 
+// 다시 나눠 줄 때 뽑을 수 있는 직업 (광대·짝이 필요한 직업·게임 시작 때만 의미 있는 직업은 제외)
+const REROLL_SKIP = new Set(['joker', 'couple', 'beggar', 'rich', 'prophet']);
+function rerollRoles(room, list, joker, newRole) {
+  const s = room.settings, enabled = new Set(s.enabledRoles || []);
+  const teamOfRole = (k) => ROLE[k].team;
+  const slots = { mafia: 0, citizen: 0, neutral: 0 };
+  for (const p of list) {
+    if (p === joker) { slots[teamOfRole(newRole)]++; continue; }
+    slots[teamOfRole(p.role)]++; // 팀별 인원은 그대로, 직업만 새로 뽑는다
+  }
+  const maxOf = (k) => (k === 'mafia' || k === 'citizen' ? 99 : (s.roleMax && s.roleMax[k] != null ? Math.max(1, s.roleMax[k] | 0) : 1));
+  const out = [];
+  for (const team of ['mafia', 'citizen', 'neutral']) {
+    const used = {};
+    const poolFor = (useEnabled) => ROLES.filter((r) => r.team === team && !REROLL_SKIP.has(r.key) && (!useEnabled || enabled.has(r.key) || r.key === 'mafia' || r.key === 'citizen')).map((r) => r.key);
+    for (let i = 0; i < slots[team]; i++) {
+      let c = poolFor(true).filter((k) => (used[k] || 0) < maxOf(k));
+      if (!c.length) c = poolFor(false).filter((k) => (used[k] || 0) < maxOf(k));
+      const k = c.length ? U.pick(c) : (team === 'mafia' ? 'mafia' : 'citizen');
+      used[k] = (used[k] || 0) + 1; out.push({ team, k });
+    }
+  }
+  return out;
+}
+
 function jokerShuffle(room, joker) {
   const newRole = U.pick(['citizen', 'mafia']);
   const list = U.alive(room);
   const before = list.map((p) => `${p.name}(${U.roleName(p.role)})`); // 섞이기 전 직업
-  const pool = U.shuffle(list.map((p) => (p === joker ? newRole : p.role)));
-  list.forEach((p, i) => { U.setRole(room, p, pool[i], true); });
+  if (room.settings.jokerMode === 'reroll') { // 팀별 인원은 유지하고, 직업은 전체 직업에서 새로 뽑아 나눠 준다
+    const picked = U.shuffle(rerollRoles(room, list, joker, newRole));
+    const byTeam = { mafia: [], citizen: [], neutral: [] };
+    for (const x of picked) byTeam[x.team].push(x.k);
+    // 광대는 시민/마피아로, 나머지는 원래 팀 칸을 받는다
+    const order = U.shuffle(list.slice());
+    for (const p of order) {
+      const team = p === joker ? ROLE[newRole].team : ROLE[p.role].team;
+      const k = p === joker ? newRole : byTeam[team].shift();
+      U.setRole(room, p, k, true);
+    }
+  } else {
+    const pool = U.shuffle(list.map((p) => (p === joker ? newRole : p.role)));
+    list.forEach((p, i) => { U.setRole(room, p, pool[i], true); });
+  }
   for (const p of room.players) { p.s.known = {}; }
-  U.sys(room, '🃏 광대의 장난으로 살아있는 모든 사람의 직업이 뒤섞였습니다! 자신의 직업을 다시 확인하세요.');
+  U.sys(room, room.settings.jokerMode === 'reroll' ? '🃏 광대의 장난으로 살아있는 모든 사람의 직업이 새로 배정되었습니다! 자신의 직업을 다시 확인하세요.' : '🃏 광대의 장난으로 살아있는 모든 사람의 직업이 뒤섞였습니다! 자신의 직업을 다시 확인하세요.');
   room.jokerBefore = before.join(', '); // 게임이 끝난 뒤 공개용으로 보관
   if (room.settings.jokerReveal === 'shuffle') U.sys(room, `📜 섞이기 전의 원래 직업: ${room.jokerBefore}`);
   for (const p of list) { if (p.role === 'follower') U.assignMaster(room, p); } // 섞인 신봉자는 새 주인을 받는다

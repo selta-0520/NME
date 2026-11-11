@@ -68,6 +68,7 @@ function defaultSettings() {
     gamblerHits: 3,
     revealOnDeath: false,
     jokerReveal: 'off', // off | shuffle | end
+    jokerMode: 'shuffle', // shuffle(있던 직업끼리 섞기) | reroll(전체 직업에서 새로 뽑기)
     botLevel: 'normal',
     selfVote: true,
     forcedRoles: [],
@@ -81,6 +82,7 @@ function applySettings(s, patch) {
   }
   if (patch.revealOnDeath !== undefined) s.revealOnDeath = !!patch.revealOnDeath;
   if (patch.finalDefense !== undefined) s.finalDefense = !!patch.finalDefense;
+  if (patch.jokerMode !== undefined && ['shuffle', 'reroll'].includes(patch.jokerMode)) s.jokerMode = patch.jokerMode;
   if (patch.jokerReveal !== undefined && ['off', 'shuffle', 'end'].includes(patch.jokerReveal)) s.jokerReveal = patch.jokerReveal;
   if (Bots.LEVEL_KEYS.includes(patch.botLevel)) s.botLevel = patch.botLevel;
   if (patch.selfVote !== undefined) s.selfVote = !!patch.selfVote;

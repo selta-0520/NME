@@ -801,6 +801,10 @@ function buildSettings() {
       h('input', { type: 'checkbox', 'data-key': 'selfVote', style: 'width:20px;height:20px', onchange: (e) => sendPatch({ selfVote: e.target.checked }) })),
     h('label', { class: 'field' }, h('span', null, '죽으면 직업 공개'),
       h('input', { type: 'checkbox', 'data-key': 'revealOnDeath', style: 'width:20px;height:20px', onchange: (e) => sendPatch({ revealOnDeath: e.target.checked }) })),
+    h('h3', null, '🃏 광대: 직업을 섞는 방식'),
+    h('div', { class: 'seg' }, [['shuffle', '있던 직업 섞기'], ['reroll', '전체 직업에서 새로 뽑기']].map(([k, l]) =>
+      h('button', { class: 'ghost', 'data-jm': k, onclick: () => { if (host) sendPatch({ jokerMode: k }); } }, l))),
+    h('div', { class: 'note' }, '섞기: 지금 게임에 나온 직업끼리 서로 바꿔요. 새로 뽑기: 팀별 인원(마피아·시민·중립)은 그대로 두고, 직업은 켜 둔 직업 중에서 새로 뽑아 나눠요. 광대는 시민 또는 마피아가 되고, 광대는 다시 나오지 않아요.'),
     h('h3', null, '🃏 광대: "섞이기 전 직업" 공개'),
     h('div', { class: 'seg' }, [['shuffle', '섞은 직후'], ['end', '게임이 끝난 후'], ['off', '꺼짐']].map(([k, l]) =>
       h('button', { class: 'ghost', 'data-jr': k, onclick: () => { if (host) sendPatch({ jokerReveal: k }); } }, l))),
@@ -848,6 +852,7 @@ function syncSettings(force) {
   const LVNOTE = { easy: '증거를 잘 따지지 못해 자주 틀려요. 가끔 행동을 빼먹고, 마피아도 실수로 팀원을 건드려요.', normal: '경찰 결과와 채팅을 참고해 의심하고, 마피아끼리 밤·투표를 맞춰요. 지목당하면 반박해요.',
     hard: '경찰이 둘 나오면 거짓말을 가려내고, 근거 없이 몰아가는 사람을 의심해요. 마피아는 가짜 경찰로 맞불을 놓아요.', extreme: '증거를 꼼꼼히 따져 표를 모으고, 진짜 경찰은 가짜 경찰을 지적해요. 마피아는 경찰·의사처럼 위협적인 사람을 노리고, 필요하면 동료를 희생해 의심을 피해요.' };
   for (const b of sheet.querySelectorAll('button[data-lv]')) b.className = b.getAttribute('data-lv') === s.botLevel ? '' : 'ghost';
+  for (const b of sheet.querySelectorAll('button[data-jm]')) b.className = b.getAttribute('data-jm') === s.jokerMode ? '' : 'ghost';
   for (const b of sheet.querySelectorAll('button[data-jr]')) b.className = b.getAttribute('data-jr') === s.jokerReveal ? '' : 'ghost';
   const note = sheet.querySelector('#lvnote'); if (note) note.textContent = (LVNOTE[s.botLevel] || '') + ' (봇은 남의 직업을 몰래 보지 않아요)';
   for (const cb of sheet.querySelectorAll('input[data-role]')) {
