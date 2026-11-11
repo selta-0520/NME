@@ -116,6 +116,22 @@
   .chips button.on{color:#fff;border-color:transparent}
   .chips button.on.mafia{background:#b9374a} .chips button.on.citizen{background:#2f6fb8} .chips button.on.neutral{background:#a47d1c}
   .mine{font-size:11px;background:var(--accent);color:#fff;padding:1px 6px;border-radius:6px;margin-left:6px}
+  /* 중요한 알림(밤/아침, 사망, 처형, 시간 조절 …)은 크게 */
+  .m.big{font-size:17px;font-weight:700;line-height:1.4;padding:9px 12px;margin:7px 0;border-radius:12px;border-left:6px solid var(--neutral);background:#ffffff10}
+  .m.big.k-night{border-color:#7b8cff;background:#7b8cff22;color:#c9d1ff}
+  .m.big.k-day{border-color:#ffd24d;background:#ffd24d1f;color:#ffe9a0}
+  .m.big.k-death{border-color:#ff5a6a;background:#ff5a6a22;color:#ffb3bb}
+  .m.big.k-vote{border-color:#ff9f43;background:#ff9f4322;color:#ffd2a1}
+  .m.big.k-time{border-color:#4dd6c1;background:#4dd6c11f;color:#a8f0e4}
+  #bigs{position:fixed;left:0;right:0;top:64px;display:flex;flex-direction:column;align-items:center;gap:8px;z-index:30;pointer-events:none;padding:0 12px}
+  .bignote{max-width:min(92vw,520px);text-align:center;font-size:22px;font-weight:800;line-height:1.35;padding:14px 20px;border-radius:16px;background:#0b0d14ee;border:2px solid var(--neutral);box-shadow:0 8px 30px #000a;animation:bigin .25s ease-out}
+  .bignote.k-night{border-color:#7b8cff;color:#c9d1ff}.bignote.k-day{border-color:#ffd24d;color:#ffe9a0}
+  .bignote.k-death{border-color:#ff5a6a;color:#ffb3bb}.bignote.k-vote{border-color:#ff9f43;color:#ffd2a1}.bignote.k-time{border-color:#4dd6c1;color:#a8f0e4}
+  @keyframes bigin{from{transform:translateY(-12px) scale(.96);opacity:0}to{transform:none;opacity:1}}
+  .defbox{text-align:center;padding:16px}
+  .defbox .big{font-size:22px;font-weight:800;margin-bottom:6px}
+  .confirm-btns{display:flex;gap:10px}
+  .confirm-btns button{flex:1;font-size:20px;padding:16px 8px}
   #toast{position:fixed;left:50%;bottom:90px;transform:translateX(-50%);background:#000c;border:1px solid var(--line);padding:10px 16px;border-radius:12px;z-index:20;max-width:88vw;text-align:center}
 </style>
 </head>
@@ -140,6 +156,7 @@
 
 <div id="room" class="screen" hidden>
   <header id="top"></header>
+  <div id="bigs"></div>
   <section id="main"></section>
   <section id="chatbox">
     <div id="msgs"></div>
@@ -232,7 +249,7 @@ function connect() {
   $('#msgs').innerHTML = '';
   es = new EventSource(`/api/events?code=${sess.code}&token=${sess.token}`);
   es.addEventListener('state', (e) => { st = JSON.parse(e.data); offset = st.now - Date.now(); render(); });
-  es.addEventListener('chat', (e) => addMsg(JSON.parse(e.data)));
+  es.addEventListener('chat', (e) => addMsg(JSON.parse(e.data), true));
   es.addEventListener('backlog', (e) => { $('#msgs').innerHTML = ''; JSON.parse(e.data).forEach(addMsg); });
   es.addEventListener('kicked', () => leaveLocal('방에서 나왔어요.'));
   es.onerror = () => {
@@ -249,10 +266,30 @@ function leaveLocal(msg) {
 }
 
 /* ------------------------------------------------ 채팅 */
-function addMsg(m) {
+// 크게 보여줄 알림 종류 판별 (밤/아침, 사망·처형, 투표, 시간 조절)
+function bigKind(m) {
+  if (m.ch !== 'sys') return null;
+  const t = m.text || '';
+  if (/밤이 되었습니다/.test(t)) return { k: 'night', banner: true };
+  if (/아침이 밝았습니다/.test(t)) return { k: 'day', banner: true };
+  if (/^💀|처형이 확정|처형이 무효|파괴당했습니다|살아남았습니다|도망쳤습니다/.test(t)) return { k: 'death', banner: true };
+  if (/시간을 \d+초 (늘렸|줄였)/.test(t)) return { k: 'time', banner: true };
+  if (/^(🗳|🛡|⚖️|🛑)/.test(t)) return { k: 'vote', banner: /최후의 반론:|찬반투표:/.test(t) };
+  return null;
+}
+function bigNote(text, k) {
+  const box = $('#bigs'); if (!box) return;
+  const n = h('div', { class: 'bignote k-' + k }, text);
+  box.append(n);
+  while (box.children.length > 2) box.firstChild.remove();
+  setTimeout(() => n.remove(), 3600);
+}
+function addMsg(m, live) {
   const box = $('#msgs');
   const near = box.scrollHeight - box.scrollTop - box.clientHeight < 60;
-  const row = h('div', { class: 'm ' + m.ch });
+  const bk = bigKind(m);
+  const row = h('div', { class: 'm ' + m.ch + (bk ? ' big k-' + bk.k : '') });
+  if (bk && live && bk.banner) bigNote(m.text, bk.k);
   if (m.name) row.append(h('b', null, m.name + (m.ch === 'mafia' ? ' 🔪' : m.ch === 'dead' ? ' 👻' : m.ch === 'couple' ? ' 💕' : '') + ':'));
   row.append(m.text);
   box.append(row);
@@ -279,6 +316,8 @@ const PHASE_TITLE = {
   night: () => `🌙 ${st.day}일차 밤`,
   day: () => `☀️ ${st.day}일차 낮 · 토론`,
   vote: () => `🗳 ${st.day}일차 투표`,
+  defense: () => `🛡 ${st.day}일차 · 최후의 반론`,
+  confirm: () => `⚖️ ${st.day}일차 · 찬반투표`,
   last: () => `💣 ${st.day}일차 · 테러리스트의 마지막 선택`,
   ended: () => '🏁 게임 종료',
 };
@@ -372,7 +411,7 @@ if (document.addEventListener) document.addEventListener('visibilitychange', () 
 function render() {
   if (!st || !meta) return;
   $('#home').hidden = true; $('#room').hidden = false;
-  document.body.className = st.phase === 'night' ? 'night' : (st.phase === 'day' || st.phase === 'vote' || st.phase === 'last') ? 'day' : '';
+  document.body.className = st.phase === 'night' ? 'night' : (st.phase === 'day' || st.phase === 'vote' || st.phase === 'defense' || st.phase === 'confirm' || st.phase === 'last') ? 'day' : '';
   if (st.phase === 'lobby') clearMemo();
   Music.setScene(st.phase);
   renderTop(); renderMain();
@@ -471,6 +510,8 @@ function hintText() {
     if (me.info.some((l) => l.includes('유혹'))) return '💋 오늘 밤은 능력을 쓸 수 없어요.' + extra;
     return '🌙 밤입니다. 지금 쓸 수 있는 능력이 없어요. 아침을 기다려 주세요.' + extra;
   }
+  if (st.phase === 'defense') return me.chat && me.chat.ch ? '🛡 당신이 처형 후보예요! 마지막으로 하고 싶은 말을 채팅으로 하세요.' : `🛡 ${st.defense ? st.defense.name : ''}님의 최후의 반론을 들어 보세요.`;
+  if (st.phase === 'confirm') return (st.confirm && st.confirm.canVote) ? '⚖️ 처형에 찬성하나요, 반대하나요? (찬성이 더 많아야 처형, 동점이면 무효)' : '⚖️ 찬반투표 중이에요.';
   if (st.phase === 'day') return '☀️ 토론 시간입니다. 누가 마피아일지 자유롭게 이야기해 보세요.';
   if (st.phase === 'vote') return me.canVote ? '🗳 처형할 사람을 선택하세요. 투표할 수 있는 모두가 투표하면 바로 개표해요. (다시 누르면 취소)' : '🚫 오늘은 투표할 수 없어요.';
   return '';
@@ -602,7 +643,7 @@ function renderMain() {
           h('button', { class: 'ghost', onclick: () => { boomPick = null; act('boom', { target: null }); } }, '아무도 데려가지 않기')));
     }
   }
-  if ((st.phase === 'day' || st.phase === 'vote') && st.begAt && me.alive) {
+  if ((st.phase === 'day' || st.phase === 'vote' || st.phase === 'defense' || st.phase === 'confirm') && st.begAt && me.alive) {
     main.append(h('div', { class: 'card' },
       h('div', { class: 'albl', style: 'font-weight:700' }, '💰 거지의 채팅 카운트다운'),
       h('div', { class: 'hint', style: 'margin-top:4px' }, '아래 채팅을 치면 카운트다운이 다시 시작돼요. 0이 되면 "한푼 줍쇼"가 자동으로 전송돼요.'),
@@ -616,6 +657,24 @@ function renderMain() {
         h('button', { class: used === 'short' ? '' : 'ghost', disabled: !!used, onclick: () => act('timeadj', { dir: 'short' }) }, '⏩ 10초 줄이기'),
         h('button', { class: used === 'long' ? '' : 'ghost', disabled: !!used, onclick: () => act('timeadj', { dir: 'long' }) }, '⏪ 10초 늘리기')),
       h('div', { class: 'hint', style: 'margin-top:6px' }, used ? `오늘은 ${used === 'short' ? '줄이기' : '늘리기'}를 썼어요. (아침마다 한 번만 쓸 수 있어요)` : '둘 중 하나만, 아침마다 한 번 쓸 수 있어요. 쓰면 모두에게 알려져요.')));
+  }
+  if ((st.phase === 'defense' || st.phase === 'confirm') && st.defense) {
+    const isT = st.defense.id === st.meId;
+    const box = h('div', { class: 'card defbox' });
+    if (st.phase === 'defense') {
+      box.append(h('div', { class: 'big' }, `🛡 ${st.defense.name}님의 최후의 반론`),
+        h('div', { class: 'hint' }, isT ? '지금은 나만 말할 수 있어요. 아래 채팅으로 억울함을 호소하세요!' : '처형 후보가 말하는 중이에요. 잘 듣고 이어지는 찬반투표에서 결정하세요.'));
+    } else {
+      const c = st.confirm || {};
+      box.append(h('div', { class: 'big' }, `⚖️ ${st.defense.name}님을 처형할까요?`),
+        h('div', { class: 'hint', style: 'margin-bottom:10px' }, `찬성 ${c.yes || 0} · 반대 ${c.no || 0} · 투표 ${c.voted || 0}/${c.eligible || 0}명 (찬성이 더 많아야 처형, 동점이면 무효)`));
+      if (c.canVote) {
+        box.append(h('div', { class: 'confirm-btns' },
+          h('button', { class: c.mine === 'yes' ? '' : 'ghost', onclick: () => act('confirm', { choice: c.mine === 'yes' ? null : 'yes' }) }, c.mine === 'yes' ? '👍 찬성 ✔' : '👍 찬성'),
+          h('button', { class: c.mine === 'no' ? '' : 'ghost', onclick: () => act('confirm', { choice: c.mine === 'no' ? null : 'no' }) }, c.mine === 'no' ? '👎 반대 ✔' : '👎 반대')));
+      } else box.append(h('div', { class: 'hint' }, isT ? '당신의 처형 여부를 다른 사람들이 투표하고 있어요.' : '지금은 투표할 수 없어요.'));
+    }
+    main.append(box);
   }
   const grid = h('div', { class: 'grid' });
   const clickable = (st.phase === 'night' || st.phase === 'vote' || st.phase === 'last');
@@ -722,6 +781,9 @@ function buildSettings() {
     numField('nightSec', '🌙 밤 시간', '초'),
     numField('daySec', '☀️ 낮(토론) 시간', '초'),
     numField('voteSec', '🗳 투표 시간', '초'),
+    h('label', { class: 'field' }, h('span', null, '🛡 최후의 반론 사용 (처형 후보가 반론 → 찬반투표)'),
+      h('input', { type: 'checkbox', 'data-key': 'finalDefense', style: 'width:20px;height:20px', onchange: (e) => sendPatch({ finalDefense: e.target.checked }) })),
+    numField('defenseSec', '🛡 최후의 반론 시간', '초'),
     h('h3', null, '🤖 봇 난이도'),
     h('div', { class: 'seg' }, [['easy', '쉬움'], ['normal', '보통'], ['hard', '어려움'], ['extreme', '극한']].map(([k, l]) =>
       h('button', { class: 'ghost', 'data-lv': k, onclick: () => { if (host) sendPatch({ botLevel: k }); } }, l))),

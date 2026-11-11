@@ -7,8 +7,8 @@ const { checkAssassins } = require('./night');
 
 const weight = (p) => (p.role === 'politician' ? 2 : 1);
 
-function resolveVote(room) {
-  const day = room.day;
+// 투표 집계 (처형은 하지 않음)
+function tallyVote(room) {
   const tally = {}; let skip = 0;
   const madamVotes = [];
   for (const [vid, t] of Object.entries(room.votes)) {
@@ -22,7 +22,33 @@ function resolveVote(room) {
   }
   const entries = Object.entries(tally).sort((a, b) => b[1] - a[1]);
   const summary = entries.map(([id, c]) => `${U.byId(room, id).name} ${c}표`).concat(skip ? [`기권 ${skip}`] : []);
-  U.sys(room, `🗳 투표 결과: ${summary.length ? summary.join(', ') : '투표가 없었습니다.'}`);
+  const leader = entries.length && (entries.length === 1 || entries[0][1] > entries[1][1]) ? U.byId(room, entries[0][0]) : null;
+  return { tally, skip, madamVotes, entries, summary, leader };
+}
+const announceTally = (room, t) => U.sys(room, `🗳 투표 결과: ${t.summary.length ? t.summary.join(', ') : '투표가 없었습니다.'}`);
+
+// 찬반투표 집계: 과반수(찬성이 더 많아야) 처형, 동점이면 무효 (반대와 같음)
+function confirmTally(room) {
+  let yes = 0, no = 0;
+  const T = room.defense && U.byId(room, room.defense.id);
+  for (const [pid, c] of Object.entries(room.confirm || {})) {
+    const v = U.byId(room, pid);
+    if (!v || !v.alive || v === T || !AB.canVote(room, v)) continue;
+    if (c === 'yes') yes += weight(v); else if (c === 'no') no += weight(v);
+  }
+  return { yes, no, ok: yes > no };
+}
+const confirmVoters = (room) => {
+  const T = room.defense && U.byId(room, room.defense.id);
+  return U.alive(room).filter((x) => x !== T && AB.canVote(room, x));
+};
+
+// opts.defense = { ok }: 최후의 반론 + 찬반투표를 거친 뒤의 처형 (ok 가 아니면 처형 취소). 집계 공지는 이미 했다.
+function resolveVote(room, opts) {
+  opts = opts || {};
+  const day = room.day;
+  const { madamVotes, entries, summary, leader } = tallyVote(room);
+  if (!opts.defense) U.sys(room, `🗳 투표 결과: ${summary.length ? summary.join(', ') : '투표가 없었습니다.'}`);
 
   // 투표시간 능력은 처형 전에 상태를 기록해 둔다 (처형으로 죽어도 결과는 전달)
   const forgeList = [];
@@ -30,8 +56,11 @@ function resolveVote(room) {
     .filter((x) => x.p && x.p.alive && x.t);
 
   // ---- 처형
-  if (entries.length && (entries.length === 1 || entries[0][1] > entries[1][1])) {
-    const T = U.byId(room, entries[0][0]);
+  if (leader && opts.defense && !opts.defense.ok) {
+    U.sys(room, `🛑 찬반투표에서 반대가 더 많거나 동점이라 ${leader.name}님의 처형이 무효가 되었습니다.`);
+  } else if (leader) {
+    const T = leader;
+    if (opts.defense) U.sys(room, `⚖️ 찬반투표에서 찬성이 더 많아 ${T.name}님의 처형이 확정되었습니다.`);
     if (T.role === 'politician') U.sys(room, `🏛 정치인 ${T.name}님은 투표로 죽지 않습니다!`);
     else if (T.role === 'beggar' && !T.s.met) U.sys(room, `🙏 거지 ${T.name}님은 투표로 죽지 않습니다!`);
     else if (T.role === 'madman' && !T.s.shieldUsed) { T.s.shieldUsed = true; U.sys(room, `🌀 ${T.name}님은 처형 투표에서 살아남았습니다!`); }
@@ -156,4 +185,4 @@ function prophetCheck(room, w) {
   return { kind: 'prophet', text: `🔮 ${txt}의 예언이 절반 이상 맞았습니다! 모든 승리가 취소되고 예언가가 우승했습니다!`, ids: won.map((x) => x.p.id), was: w };
 }
 
-module.exports = { resolveVote, resolveBoom, checkWin, weight, prophetCheck };
+module.exports = { resolveVote, resolveBoom, checkWin, weight, prophetCheck, tallyVote, announceTally, confirmTally, confirmVoters };

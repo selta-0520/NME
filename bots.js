@@ -629,6 +629,25 @@ function botVoteAbility(room, p) {
   } else t = best(cands.filter((c) => !b.checks[c.id]), (c) => sus(room, p, c), lv(room, p).noise) || rnd(cands); // 밀고자: 의심스러운 사람
   if (t) act(room, p, { type: 'vact', target: t.id });
 }
+// 최후의 반론: 처형 후보가 된 봇이 한마디 한다
+function botDefense(room, p) {
+  const lines = mafiaSide(p)
+    ? ['저는 마피아가 아니에요. 저를 처형하면 진짜 마피아만 좋아해요.', '억울해요! 제대로 따져 보고 결정해 주세요.']
+    : ['저는 시민이에요. 저를 처형하면 마피아에게 이득이에요. 다시 생각해 주세요.', '억울합니다. 지금까지 한 말을 다시 떠올려 보세요.'];
+  say(room, p, rnd(lines));
+}
+// 찬반투표: 내가 찍은 후보면 찬성, 아니면 의심 정도에 따라 (마피아는 팀원이면 반대)
+function botConfirm(room, p) {
+  const T = room.defense && U.byId(room, room.defense.id);
+  if (!T || T === p || !E.confirmVoters(room).includes(p)) return;
+  sync(room, p);
+  const L = lv(room, p);
+  let yes;
+  if (mafiaSide(p) && knownMate(p, T)) yes = chance(L.mistake);
+  else if (room.votes[p.id] === T.id) yes = chance(0.92);
+  else yes = chance(Math.max(0.15, Math.min(0.92, 0.58 + sus(room, p, T) / 120)));
+  act(room, p, { type: 'confirm', choice: yes ? 'yes' : 'no' });
+}
 function botVote(room, p) {
   const L = lv(room, p), A = ai(room);
   sync(room, p);
@@ -694,7 +713,7 @@ function schedule(room) {
     }
     return;
   }
-  const sec = phase === 'night' ? room.settings.nightSec : phase === 'day' ? room.settings.daySec : room.settings.voteSec;
+  const sec = phase === 'night' ? room.settings.nightSec : phase === 'day' ? room.settings.daySec : phase === 'defense' ? room.settings.defenseSec : phase === 'confirm' ? (Number(process.env.NME_CONFIRM_SEC) || 12) : room.settings.voteSec;
   for (const p of room.players) {
     if (!p.bot || !p.alive) continue;
     const L = lv(room, p);
@@ -714,6 +733,8 @@ function schedule(room) {
         if (t && sus(room, p, t) > 15 && pm(p).intentSaid !== room.day) { pm(p).intentSaid = room.day; say(room, p, `오늘은 ${t.name}님에게 투표할게요.`, { intent: t.id }); }
       });
     } else if (phase === 'vote') at(0.2, 0.85, () => botVote(room, p));
+    else if (phase === 'defense') { if (room.defense && room.defense.id === p.id) at(0.1, 0.4, () => botDefense(room, p)); }
+    else if (phase === 'confirm') at(0.15, 0.75, () => botConfirm(room, p));
   }
 }
 

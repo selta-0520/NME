@@ -15,6 +15,7 @@ const Bots = require('./bots');
 const PORT = Number(process.env.PORT) || 3000;
 const QUIET_LIMIT = 6;
 const TIME_ADJ_MS = 10000; // 아침 시간 조절 한 번에 바뀌는 시간
+const CONFIRM_SEC = Number(process.env.NME_CONFIRM_SEC) || 12; // 찬반투표 시간
 const LAST_SEC = 15; // 처형된 테러리스트가 함께 죽을 사람을 고르는 시간
 // 어떤 오류가 나도 서버 전체가 꺼지지 않게 한다 (한 방의 오류가 모두의 접속을 끊지 않도록)
 process.on('uncaughtException', (e) => console.error('[오류]', e && e.stack || e));
@@ -25,6 +26,7 @@ const LIMITS = {
   nightSec: [15, 180],
   daySec: [15, 600],
   voteSec: [10, 120],
+  defenseSec: [5, 60],
   mafiaSpecialMax: [0, 10],
   citizenSpecialMax: [0, 40],
   neutralMax: [0, 10],
@@ -52,6 +54,8 @@ function defaultSettings() {
     nightSec: 40,
     daySec: 90,
     voteSec: 30,
+    finalDefense: true,
+    defenseSec: 15,
     mafiaSpecialMax: 2,
     citizenSpecialMax: 12,
     neutralMax: 2,
@@ -71,6 +75,7 @@ function applySettings(s, patch) {
     if (patch[k] !== undefined) s[k] = clamp(patch[k], LIMITS[k], s[k]);
   }
   if (patch.revealOnDeath !== undefined) s.revealOnDeath = !!patch.revealOnDeath;
+  if (patch.finalDefense !== undefined) s.finalDefense = !!patch.finalDefense;
   if (patch.jokerReveal !== undefined) s.jokerReveal = !!patch.jokerReveal;
   if (patch.jokerRevealEnd !== undefined) s.jokerRevealEnd = !!patch.jokerRevealEnd;
   if (Bots.LEVEL_KEYS.includes(patch.botLevel)) s.botLevel = patch.botLevel;
@@ -155,7 +160,7 @@ function addChat(room, ch, text, from, to) {
   room.chat.push(m);
   if (room.chat.length > 400) room.chat.shift();
   for (const p of room.players) if (E.canSeeMsg(room, p, m)) sendToPlayer(p, 'chat', pubMsg(m));
-  if (from && !from.bot && ch === 'all' && (room.phase === 'day' || room.phase === 'vote')) Bots.hear(room, { from: from.id, text });
+  if (from && !from.bot && ch === 'all' && (room.phase === 'day' || room.phase === 'vote' || room.phase === 'defense' || room.phase === 'confirm')) Bots.hear(room, { from: from.id, text });
   return m;
 }
 function sendBacklog(room, p) {
@@ -199,7 +204,20 @@ function viewFor(room, p) {
     v.me = E.meView(room, p);
     if (room.phase === 'day') v.dayAdj = (room.dayAdj && room.dayAdj[p.id]) || null;
     if (room.phase === 'last' && room.lastBoom) { const t = byId(room, room.lastBoom); v.last = { terrorist: room.lastBoom, name: t ? t.name : '' }; }
-    if (p.alive && p.role === 'beggar' && p.s.met && room.begAt && (room.phase === 'day' || room.phase === 'vote')) v.begAt = room.begAt;
+    if (p.alive && p.role === 'beggar' && p.s.met && room.begAt && (room.phase === 'day' || room.phase === 'vote' || room.phase === 'defense' || room.phase === 'confirm')) v.begAt = room.begAt;
+    if ((room.phase === 'defense' || room.phase === 'confirm') && room.defense) {
+      const T = byId(room, room.defense.id);
+      v.defense = { id: room.defense.id, name: T ? T.name : '' };
+      if (room.phase === 'confirm') {
+        const c = Object.entries(room.confirm || {}).filter(([pid]) => { const x = byId(room, pid); return x && x.alive; });
+        const voters = E.confirmVoters(room);
+        v.confirm = {
+          yes: c.filter(([, k]) => k === 'yes').length, no: c.filter(([, k]) => k === 'no').length,
+          voted: c.length, eligible: voters.length, mine: (room.confirm || {})[p.id] || null,
+          canVote: p.alive && voters.some((x) => x.id === p.id),
+        };
+      }
+    }
     if (room.phase === 'vote') {
       const tally = {}; let skip = 0;
       for (const [vid, t] of Object.entries(room.votes)) {
@@ -218,7 +236,7 @@ function viewFor(room, p) {
 const BEG_MIN = 12000, BEG_MAX = 17000;
 function clearBeg(room) { clearTimeout(room.begTimer); room.begTimer = null; room.begAt = 0; }
 function activeBeggar(room) { // 지금 채팅할 수 있는 만난 거지
-  if (room.phase !== 'day' && room.phase !== 'vote') return null;
+  if (room.phase !== 'day' && room.phase !== 'vote' && room.phase !== 'defense' && room.phase !== 'confirm') return null;
   const b = room.players.find((x) => x.alive && x.role === 'beggar' && x.s.met);
   return b && E.chatInfo(room, b).ch === 'all' ? b : null;
 }
@@ -249,7 +267,7 @@ function setPhase(room, phase) {
   room.phase = phase;
   room.seq++;
   const s = room.settings;
-  const sec = phase === 'night' ? s.nightSec : phase === 'day' ? s.daySec : phase === 'vote' ? s.voteSec : phase === 'last' ? LAST_SEC : 0;
+  const sec = phase === 'night' ? s.nightSec : phase === 'day' ? s.daySec : phase === 'vote' ? s.voteSec : phase === 'defense' ? s.defenseSec : phase === 'confirm' ? CONFIRM_SEC : phase === 'last' ? LAST_SEC : 0;
   if (sec) {
     room.endsAt = Date.now() + sec * 1000;
     const seq = room.seq;
@@ -258,10 +276,11 @@ function setPhase(room, phase) {
   if (phase === 'night') E.startNight(room);
   if (phase === 'day') room.dayAdj = {};
   if (phase === 'night') room.cycleAlive = alivePlayers(room).length;
-  if (phase === 'vote') { room.votes = {}; room.voteActs = {}; }
+  if (phase === 'vote') { room.votes = {}; room.voteActs = {}; room.defense = null; room.confirm = {}; }
+  if (phase === 'confirm') room.confirm = {};
   broadcastState(room);
-  if (phase === 'day' || phase === 'vote') scheduleBeg(room); else clearBeg(room);
-  if (phase === 'night' || phase === 'day' || phase === 'vote' || phase === 'last') Bots.schedule(room);
+  if (phase === 'day' || phase === 'vote' || phase === 'defense' || phase === 'confirm') scheduleBeg(room); else clearBeg(room);
+  if (phase === 'night' || phase === 'day' || phase === 'vote' || phase === 'defense' || phase === 'confirm' || phase === 'last') Bots.schedule(room);
 }
 
 function startGame(room) {
@@ -307,6 +326,7 @@ function safeAdvance(room) {
   try { advance(room); } catch (e) {
     console.error('[단계 진행 오류]', e && e.stack || e);
     room.lastBoom = null;
+    if (room.phase === 'defense' || room.phase === 'confirm') { room.defense = null; room.day++; room.phase = 'vote'; } // 찬반투표 중 오류: 다음 밤으로 안전하게 넘김
     try { if (room.phase !== 'lobby' && room.phase !== 'ended') { room.day = room.day || 1; setPhase(room, room.phase === 'night' ? 'day' : room.phase === 'day' ? 'vote' : 'night'); } } catch (e2) { console.error('[복구 실패]', e2 && e2.stack || e2); }
   }
 }
@@ -321,22 +341,45 @@ function advance(room) {
     addChat(room, 'sys', '🗳 투표 시간입니다. 처형할 사람을 선택하세요.');
     setPhase(room, 'vote');
   } else if (room.phase === 'vote') {
-    const before = alivePlayers(room).map((x) => x.id), snap = Object.assign({}, room.votes);
-    E.resolveVote(room);
-    Bots.afterResolve(room, before, snap);
-    if (room.lastBoom && alivePlayers(room).length) { // 처형된 테러리스트가 함께 죽을 사람을 고르는 시간
-      addChat(room, 'sys', '💣 처형된 테러리스트가 함께 죽을 사람을 고르고 있습니다…');
-      setPhase(room, 'last');
+    const t = E.tallyVote(room);
+    if (room.settings.finalDefense && t.leader && t.leader.alive && room.players.filter((x) => x.alive && x !== t.leader).length) {
+      // 최후의 반론 → 찬반투표
+      E.announceTally(room, t);
+      room.defense = { id: t.leader.id };
+      addChat(room, 'sys', `🛡 최후의 반론: ${t.leader.name}님이 처형 후보입니다. ${room.settings.defenseSec}초 동안 ${t.leader.name}님만 말할 수 있어요.`);
+      setPhase(room, 'defense');
       return;
     }
-    room.lastBoom = null;
-    afterVote(room);
+    finishVote(room, null);
+  } else if (room.phase === 'defense') {
+    if (!E.confirmVoters(room).length) { finishVote(room, { ok: true }); return; } // 투표할 사람이 없으면 그대로 진행
+    addChat(room, 'sys', `⚖️ 찬반투표: ${room.defense && byId(room, room.defense.id) ? byId(room, room.defense.id).name : ''}님의 처형에 찬성하나요, 반대하나요? (동점이면 처형 무효)`);
+    setPhase(room, 'confirm');
+  } else if (room.phase === 'confirm') {
+    const c = E.confirmTally(room);
+    addChat(room, 'sys', `⚖️ 찬반투표 결과: 찬성 ${c.yes} · 반대 ${c.no}`);
+    finishVote(room, { ok: c.ok });
   } else if (room.phase === 'last') {
     const before = alivePlayers(room).map((x) => x.id);
     E.resolveBoom(room, room.lastPick || null);
     Bots.afterResolve(room, before, {});
     afterVote(room);
   }
+}
+
+// 투표 결과를 실제로 처리 (defense 가 있으면 최후의 반론·찬반투표를 거친 결과)
+function finishVote(room, defense) {
+  const before = alivePlayers(room).map((x) => x.id), snap = Object.assign({}, room.votes);
+  E.resolveVote(room, defense ? { defense } : null);
+  room.defense = null;
+  Bots.afterResolve(room, before, snap);
+  if (room.lastBoom && alivePlayers(room).length) { // 처형된 테러리스트가 함께 죽을 사람을 고르는 시간
+    addChat(room, 'sys', '💣 처형된 테러리스트가 함께 죽을 사람을 고르고 있습니다…');
+    setPhase(room, 'last');
+    return;
+  }
+  room.lastBoom = null;
+  afterVote(room);
 }
 
 // 투표(와 테러리스트의 마지막 선택)가 끝난 뒤: 승패 판정 → 다음 밤
@@ -359,7 +402,7 @@ function resetToLobby(room) {
   clearTimeout(room.timer); clearBeg(room); room.lastBoom = null; room.lastPick = null;
   Bots.reset(room);
   room.phase = 'lobby'; room.day = 0; room.winner = null; room.night = null; room.votes = {}; room.voteActs = {};
-  room.touches = []; room.pendingWin = null; room.endsAt = 0; room.chat = []; room.seq++; room.jokerBefore = null;
+  room.touches = []; room.pendingWin = null; room.endsAt = 0; room.chat = []; room.seq++; room.jokerBefore = null; room.defense = null; room.confirm = {};
   for (const p of room.players) {
     p.role = null; p.alive = true; p.s = {}; p.team = null; p.contacted = false; p.destroyed = false; p.exorcised = false; p.blessed = false; p.blessedBy = null; p.loaning = false; p.origRole = null; p.guess = null;
   }
@@ -463,7 +506,7 @@ function handleAction(room, p, b) {
     }
     case 'skip': {
       if (!isHost) fail('방장만 단계를 넘길 수 있어요.');
-      if (!['night', 'day', 'vote'].includes(room.phase)) fail('지금은 넘길 수 없어요.');
+      if (!['night', 'day', 'vote', 'defense', 'confirm'].includes(room.phase)) fail('지금은 넘길 수 없어요.');
       safeAdvance(room);
       return;
     }
@@ -536,6 +579,19 @@ function handleAction(room, p, b) {
       if (done()) {
         setTimeout(() => { if (room.seq === seq && room.phase === 'vote' && done()) safeAdvance(room); }, 1500);
       }
+      return;
+    }
+    case 'confirm': { // 최후의 반론 뒤 찬성/반대 투표
+      if (room.phase !== 'confirm' || !room.defense) fail('지금은 찬반투표 시간이 아니에요.');
+      if (!p.alive) fail('죽은 사람은 투표할 수 없어요.');
+      if (room.defense.id === p.id) fail('처형 후보는 투표할 수 없어요.');
+      if (!E.confirmVoters(room).some((x) => x.id === p.id)) fail('지금은 투표할 수 없어요.');
+      if (b.choice === 'yes' || b.choice === 'no') room.confirm[p.id] = b.choice;
+      else delete room.confirm[p.id];
+      broadcastState(room);
+      const seq = room.seq;
+      const done = () => E.confirmVoters(room).every((x) => room.confirm[x.id]);
+      if (done()) setTimeout(() => { if (room.seq === seq && room.phase === 'confirm' && done()) safeAdvance(room); }, 1500);
       return;
     }
     default: fail('알 수 없는 요청이에요.');

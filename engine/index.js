@@ -4,7 +4,7 @@ const U = require('./util');
 const AB = require('./abilities');
 const { assignRoles } = require('./assign');
 const { startNight, resolveNight } = require('./night');
-const { resolveVote, resolveBoom, checkWin, weight, prophetCheck } = require('./vote');
+const { resolveVote, resolveBoom, checkWin, weight, prophetCheck, tallyVote, announceTally, confirmTally, confirmVoters } = require('./vote');
 
 // 밤 능력 선택 저장
 function setNightAct(room, p, b) {
@@ -59,7 +59,7 @@ function meView(room, p) {
 }
 
 module.exports = {
-  U, AB, assignRoles, startNight, resolveNight, resolveVote, resolveBoom, checkWin, weight, prophetCheck, setNightAct, setVoteAct, meView,
+  U, AB, assignRoles, startNight, resolveNight, resolveVote, resolveBoom, checkWin, weight, prophetCheck, tallyVote, announceTally, confirmTally, confirmVoters, setNightAct, setVoteAct, meView,
   chatInfo: AB.chatInfo, canSeeMsg: AB.canSeeMsg, knowsRole: AB.knowsRole, shownRoleTo: AB.shownRoleTo,
   canVote: AB.canVote, voteBlockReason: AB.voteBlockReason, GameError: U.GameError,
 };

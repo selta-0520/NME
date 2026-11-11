@@ -128,6 +128,9 @@ function chatInfo(room, p) {
     return { ch: null, label: '🌙 밤에는 말할 수 없어요' };
   }
   if (p.s.silenceDay === room.day) return { ch: null, label: '😨 겁을 먹어 말할 수 없어요' };
+  if (room.phase === 'defense' && room.defense) { // 최후의 반론: 처형 후보만 말할 수 있다
+    return room.defense.id === p.id ? { ch: 'all', label: '🛡 최후의 반론 — 마지막으로 하고 싶은 말을 하세요' } : { ch: null, label: '🛡 최후의 반론을 듣는 중이에요' };
+  }
   return { ch: 'all', label: '전체 대화' };
 }
 
