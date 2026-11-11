@@ -4,7 +4,7 @@ const U = require('./util');
 const AB = require('./abilities');
 const { assignRoles } = require('./assign');
 const { startNight, resolveNight } = require('./night');
-const { resolveVote, resolveBoom, checkWin, weight } = require('./vote');
+const { resolveVote, resolveBoom, checkWin, weight, prophetCheck } = require('./vote');
 
 // 밤 능력 선택 저장
 function setNightAct(room, p, b) {
@@ -45,6 +45,9 @@ function meView(room, p) {
   if (v) me.voteAbility = v;
   const bm = AB.boomOptions(room, p);
   if (bm) me.boom = bm;
+  if (p.origRole === 'prophet' && room.phase !== 'ended') {
+    me.predict = { open: room.phase === 'night' && room.day === 1, ids: room.players.filter((x) => x !== p).map((x) => x.id), guesses: p.guess || {} };
+  }
   if (room.phase === 'night' && room.night && p.alive && U.canAttackAsMafia(room, p)) {
     me.mafiaPicks = {};
     for (const [pid, a] of Object.entries(room.night.acts)) {
@@ -56,7 +59,7 @@ function meView(room, p) {
 }
 
 module.exports = {
-  U, AB, assignRoles, startNight, resolveNight, resolveVote, resolveBoom, checkWin, weight, setNightAct, setVoteAct, meView,
+  U, AB, assignRoles, startNight, resolveNight, resolveVote, resolveBoom, checkWin, weight, prophetCheck, setNightAct, setVoteAct, meView,
   chatInfo: AB.chatInfo, canSeeMsg: AB.canSeeMsg, knowsRole: AB.knowsRole, shownRoleTo: AB.shownRoleTo,
   canVote: AB.canVote, voteBlockReason: AB.voteBlockReason, GameError: U.GameError,
 };

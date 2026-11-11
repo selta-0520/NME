@@ -39,6 +39,14 @@ function nightOptions(room, p, modeOverride) {
       const left = U.destroyLimit(room) - (p.s.destroyUsed || 0);
       return left > 0 ? o(`💥 파괴할 사람 (남은 횟수 ${left}번)`, others) : null;
     }
+    case 'forger': return p.contacted ? null : o('🤝 마피아인지 확인할 사람 (마피아면 접선)', others);
+    case 'agitator': {
+      if (!p.contacted) return o('🤝 마피아인지 확인할 사람 (마피아면 접선)', others);
+      if (p.s.reportUsed) return null;
+      const modes = [{ key: 'real', label: '진짜 직업 그대로 공개' }].concat(Object.values(ROLE).map((r) => ({ key: r.key, label: `"${r.name}"(으)로 속여서 공개` })));
+      let mode = modeOverride || a.mode; if (!modes.some((m) => m.key === mode)) mode = 'real';
+      return o('📰 속보를 낼 사람 (1회, 공개할 직업을 속일 수 있어요)', others, { modes, mode, select: true });
+    }
     case 'gambler': return o('🎰 오늘 밤 죽을 것 같은 사람', others);
     case 'thief': {
       if (p.s.loan && !p.loaning) {
@@ -77,6 +85,7 @@ function voteOptions(room, p) {
   switch (p.role) {
     case 'detective': return p.s.detA ? o('🕵 비교할 두 번째 사람 (투표시간)', A) : null;
     case 'informant': return o('📢 밀고할 사람 (마피아인지 확인)', others);
+    case 'forger': return p.contacted ? o('🖋 조사 결과를 위조할 사람', A) : null;
     default: return null;
   }
 }
@@ -177,6 +186,9 @@ function infoLines(room, p) {
       L.push(t ? `✨ 가호를 내린 사람: ${t.name} ${t.blessed ? '(가호 아직 남음)' : '(가호가 이미 발동했어요)'}` : '✨ 가호 사용 완료'); break;
     }
     case 'destroyer': { const lim = U.destroyLimit(room), used = p.s.destroyUsed || 0; L.push(`💥 파괴 ${used}/${lim}번 사용${used >= lim ? ' (더는 파괴할 수 없어요)' : ''}`); break; }
+    case 'forger': L.push(p.contacted ? '🖋 투표시간에 1명의 조사 결과를 위조해요. (마피아→마피아 아님 / 그 외→마피아, 다음 투표 때까지)' : '🖋 밤에 마피아를 찾아 접선하세요. 접선하면 투표시간에 조사 결과를 위조할 수 있어요.'); break;
+    case 'agitator': L.push(!p.contacted ? '📰 밤에 마피아를 찾아 접선하세요. 접선하면 직업을 속여서 속보를 낼 수 있어요.' : p.s.reportUsed ? '📰 속보 사용 완료' : '📰 속보를 1번 낼 수 있어요. 공개할 직업을 속일 수 있어요.'); break;
+    case 'prophet': { const n = Object.keys(p.guess || {}).length; L.push(room.day === 1 && room.phase === 'night' ? `🔮 첫날 밤 안에 모든 사람의 직업을 예언하세요! (입력 ${n}/${room.players.length - 1}명)` : `🔮 예언을 ${n}/${room.players.length - 1}명 입력했어요. 게임이 끝나면 적중을 계산해요.`); break; }
     case 'gambler': L.push(`🎰 적중 ${p.s.hits || 0}/${room.settings.gamblerHits}번 — 매일 밤 죽을 사람을 예측하세요.`); break;
     case 'follower': { const m = p.s.master ? U.byId(room, p.s.master) : null; L.push(m ? `🙇 주인: ${m.name}${m.alive ? '' : ' (사망 — 이제 우승할 수 없어요)'}` : '🙇 주인이 없어요.'); break; }
     case 'survivor': L.push(`🍀 남은 목숨 ${Math.max(0, 2 - (p.s.surv || 0))}번 — 마피아 팀 또는 시민 팀이 전멸할 때 살아있으면 우승!`); break;

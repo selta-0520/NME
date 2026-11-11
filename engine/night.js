@@ -41,7 +41,8 @@ function jokerShuffle(room, joker) {
   list.forEach((p, i) => { U.setRole(room, p, pool[i], true); });
   for (const p of room.players) { p.s.known = {}; }
   U.sys(room, '🃏 광대의 장난으로 살아있는 모든 사람의 직업이 뒤섞였습니다! 자신의 직업을 다시 확인하세요.');
-  if (room.settings.jokerReveal) U.sys(room, `📜 섞이기 전의 원래 직업: ${before.join(', ')}`);
+  room.jokerBefore = before.join(', '); // 게임이 끝난 뒤 공개용으로 보관
+  if (room.settings.jokerReveal) U.sys(room, `📜 섞이기 전의 원래 직업: ${room.jokerBefore}`);
   for (const p of list) { if (p.role === 'follower') U.assignMaster(room, p); } // 섞인 신봉자는 새 주인을 받는다
   for (const p of list) {
     U.priv(room, p, `🎭 새 직업: ${U.roleName(p.role)} — ${ROLE[p.role].desc}`);
@@ -182,6 +183,17 @@ function resolveNight(room) {
         break;
       case 'destroyer': p.s.destroyUsed = (p.s.destroyUsed || 0) + 1; attacks.push({ kind: 'destroy', by: p, t }); U.touch(room, p, t); break;
       case 'gambler': p.s.gamble = t.id; break;
+      case 'forger': case 'agitator': {
+        if (!p.contacted) { // 마피아를 찾으면 접선
+          U.touch(room, p, t);
+          if (U.isMafiaKnown(t)) U.contact(room, p, t); else priv(p, `🤝 ${t.name}님은 마피아가 아니었습니다.`);
+          break;
+        }
+        const fake = x.mode && x.mode !== 'real' && ROLE[x.mode] ? x.mode : null;
+        p.s.reportUsed = true; p.s.report = { target: t.id, day: day + 1, fake };
+        priv(p, `📰 ${t.name}님에 대한 속보를 준비했습니다.${fake ? ` 공개될 직업: "${U.roleName(fake)}" (거짓)` : ''} 다음 날 아침에 공개됩니다.`);
+        U.touch(room, p, t); break;
+      }
       case 'thief': {
         p.s.stolenIds = (p.s.stolenIds || []).concat(t.id);
         U.touch(room, p, t);
@@ -316,7 +328,7 @@ function resolveNight(room) {
       if (g.role !== 'gravedigger') continue;
       const src = deaths.map((d) => d.p).find((p) => p !== g && !p.alive);
       let role = src ? src.role : 'citizen';
-      if (['couple', 'beggar', 'rich', 'gravedigger', 'joker', 'follower'].includes(role)) role = 'citizen';
+      if (['couple', 'beggar', 'rich', 'gravedigger', 'joker', 'follower', 'prophet'].includes(role)) role = 'citizen';
       copyRoleNote(room, g, role);
     }
   }
@@ -328,10 +340,10 @@ function resolveNight(room) {
 
   // 기자 속보
   for (const p of room.players) {
-    if ((p.role === 'reporter' || p.role === 'thief') && p.s.report && p.s.report.day === day) {
+    if ((p.role === 'reporter' || p.role === 'thief' || p.role === 'agitator') && p.s.report && p.s.report.day === day) {
       if (p.alive) {
         const t = U.byId(room, p.s.report.target);
-        U.sys(room, `📰 속보! ${t.name}님의 직업은 "${U.roleName(U.shownRole(t))}"입니다.`);
+        U.sys(room, `📰 속보! ${t.name}님의 직업은 "${U.roleName(p.s.report.fake || U.shownRole(t))}"입니다.`);
       }
       p.s.report = null;
     }

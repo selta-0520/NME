@@ -59,7 +59,7 @@
   .kick{position:absolute;top:2px;right:4px;background:none;color:var(--dim);padding:2px 6px;font-size:14px}
   .banner{text-align:center;font-size:20px;font-weight:800;padding:14px}
   .banner.mafia{color:var(--mafia)} .banner.citizen{color:var(--citizen)}
-  .banner.duo,.banner.solo,.banner.neutral,.banner.killers,.banner.draw{color:var(--neutral)}
+  .banner.prophet,.banner.duo,.banner.solo,.banner.neutral,.banner.killers,.banner.draw{color:var(--neutral)}
   .rinfo{font-size:13px;margin-top:6px;color:var(--text)}
   .ability .albl{font-weight:700;margin-bottom:6px}
   .seg{display:flex;gap:8px;flex-wrap:wrap}
@@ -320,6 +320,7 @@ function renderTop() {
 let uiMode = 'vote', lastPhaseKey = '', progDraft = null;
 function phaseKey() { return st.phase + ':' + st.day; }
 
+let predDraft = {}; // 예언가가 입력 중인 예언 (저장 전)
 let boomPick = null; // 처형된 테러리스트가 고른 사람 (확정 전)
 function targetable(q) {
   const me = st.me;
@@ -406,7 +407,11 @@ function abilityPanel() {
   const n = st.me.night;
   const box = h('div', { class: 'card ability' });
   box.append(h('div', { class: 'albl' }, n.label));
-  if (n.modes) {
+  if (n.modes && n.select) { // 선택지가 많을 때는 목록으로
+    const sel = h('select', { id: 'modesel', style: 'width:100%;padding:8px', onchange: (e) => act('night', { target: null, mode: e.target.value, keepTarget: true }) },
+      n.modes.map((m) => h('option', { value: m.key, selected: n.mode === m.key }, m.label)));
+    box.append(sel);
+  } else if (n.modes) {
     box.append(h('div', { class: 'seg' }, n.modes.map((m) =>
       h('button', { class: n.mode === m.key ? '' : 'ghost', onclick: () => act('night', { target: null, mode: m.key }) }, m.label))));
   }
@@ -424,10 +429,32 @@ function abilityPanel() {
   return box;
 }
 
+// 예언가: 첫날 밤 안에 모든 사람의 직업을 예언
+function predictPanel() {
+  const pr = st.me.predict;
+  const box = h('div', { class: 'card ability' });
+  const done = Object.keys(pr.guesses || {}).length;
+  box.append(h('div', { class: 'albl' }, pr.open ? `🔮 모든 사람의 직업을 예언하세요 (${done}/${pr.ids.length}명 저장됨)` : `🔮 내 예언 (${done}/${pr.ids.length}명)`));
+  if (!pr.open) {
+    for (const id of pr.ids) { const q = pById(id); const k = pr.guesses[id]; box.append(h('div', { class: 'note' }, `${q ? q.name : '?'} → ${k && ROLE[k] ? ROLE[k].name : '(입력 안 함)'}`)); }
+    return box;
+  }
+  box.append(h('div', { class: 'note' }, '게임이 끝났을 때 절반 이상이 처음 배정된 직업과 맞으면 모든 승리가 취소되고 예언가가 우승해요. 첫날 밤 안에 저장하세요.'));
+  for (const id of pr.ids) {
+    const q = pById(id); if (!q) continue;
+    const cur = predDraft[id] !== undefined ? predDraft[id] : (pr.guesses[id] || '');
+    box.append(h('label', { class: 'field' }, h('span', null, q.name),
+      h('select', { onchange: (e) => { predDraft[id] = e.target.value; } },
+        [h('option', { value: '' }, '(선택 안 함)')].concat(meta.roles.map((r) => h('option', { value: r.key, selected: cur === r.key }, r.name))))));
+  }
+  box.append(h('button', { onclick: () => { const g = Object.assign({}, pr.guesses, predDraft); for (const k of Object.keys(g)) if (!g[k]) delete g[k]; act('predict', { guesses: g }); } }, '🔮 예언 저장'));
+  return box;
+}
+
 function renderMain() {
   const hadFocus = document.activeElement && document.activeElement.id === 'progtext';
   const main = $('#main'); main.innerHTML = '';
-  if (st.phase === 'lobby') return renderLobby(main);
+  if (st.phase === 'lobby') { predDraft = {}; return renderLobby(main); }
   const me = st.me;
   if (lastPhaseKey !== phaseKey()) { lastPhaseKey = phaseKey(); uiMode = 'vote'; progDraft = null; boomPick = null; }
   if (!me.voteAbility) uiMode = 'vote';
@@ -445,6 +472,7 @@ function renderMain() {
     const hint = hintText();
     if (hint) main.append(h('div', { class: 'hint' }, hint));
     if (st.phase === 'night' && me.night) main.append(abilityPanel());
+    if (me.predict) main.append(predictPanel());
   }
 
   if (st.phase === 'vote' && me.alive && me.voteAbility) {
@@ -603,8 +631,10 @@ function buildSettings() {
       h('input', { type: 'checkbox', 'data-key': 'selfVote', style: 'width:20px;height:20px', onchange: (e) => sendPatch({ selfVote: e.target.checked }) })),
     h('label', { class: 'field' }, h('span', null, '죽으면 직업 공개'),
       h('input', { type: 'checkbox', 'data-key': 'revealOnDeath', style: 'width:20px;height:20px', onchange: (e) => sendPatch({ revealOnDeath: e.target.checked }) })),
-    h('label', { class: 'field' }, h('span', null, '광대가 직업을 섞으면 "섞이기 전 직업" 공개'),
+    h('label', { class: 'field' }, h('span', null, '광대가 직업을 뒤섞은 직후 "섞이기 전 직업" 공개'),
       h('input', { type: 'checkbox', 'data-key': 'jokerReveal', style: 'width:20px;height:20px', onchange: (e) => sendPatch({ jokerReveal: e.target.checked }) })),
+    h('label', { class: 'field' }, h('span', null, '게임이 끝난 뒤 "광대가 섞기 전 직업" 공개'),
+      h('input', { type: 'checkbox', 'data-key': 'jokerRevealEnd', style: 'width:20px;height:20px', onchange: (e) => sendPatch({ jokerRevealEnd: e.target.checked }) })),
     h('h3', null, '🎭 사용할 직업'),
     h('div', { class: 'note' }, '체크한 직업만 게임에 나와요. 마피아·시민도 끌 수 있어요. 커플은 2명이 함께, "거지 & 부자"는 한 번 체크하면 둘이 함께 나와요. 인원이 적으면 모든 직업이 나오지는 않아요.'),
     h('div', { class: 'note', style: 'margin-top:4px' }, '⭐ "필수 등장"을 켜면 그 직업은 팀 최대 인원을 넘더라도 최소 1명은 무조건 나와요. (인원이 모자라면 못 넣을 수 있어요. 거지·부자는 함께 켜져요)'),

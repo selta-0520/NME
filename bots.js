@@ -277,6 +277,12 @@ function pickNight(room, p, opt, mode) {
     }
     case 'angel': // 사제: 위협적인 진짜(처럼 보이는) 경찰·의사, 아니면 자신
       return (best(cands, (c) => (claimedRole(room, c.id, 'police') ? cred(room, p, c.id, 'police') * 160 : 0) + (claimedRole(room, c.id, 'doctor') ? 60 : 0) + (c.id === p.id ? 30 : 0) + trust(c) * 0.12, N) || {}).id;
+    case 'forger': case 'agitator': { // 접선 전: 마피아를 찾는 탐색 (이미 확인한 사람은 제외)
+      const pool = cands.filter((c) => !b.checks[c.id] && !knownMate(p, c));
+      const pick = rnd(pool.length ? pool : cands);
+      if (pick && !b.checks[pick.id]) b.checks[pick.id] = 'tried';
+      return (pick || {}).id;
+    }
     case 'gambler': // 마피아가 노릴 만한 사람(경찰·의사로 믿음직한 사람)을 예측
       return (best(cands, (c) => (claimedRole(room, c.id, 'police') ? 120 : 0) + (claimedRole(room, c.id, 'doctor') ? 80 : 0) + (claimedRole(room, c.id, 'bodyguard') ? 40 : 0) + trust(c) * 0.15, N * 2) || {}).id;
     case 'thief': // 훔칠 사람: 능력이 있을 것 같은(경찰·의사로 주장한) 사람, 한 번 고른 사람은 제외됨
@@ -308,6 +314,26 @@ function chooseMode(room, p, opt) {
 function botNight(room, p) {
   const L = lv(room, p);
   sync(room, p);
+  if (p.role === 'prophet' && room.day === 1 && !p.guess) { // 예언가: 첫날 밤에 모두의 직업을 예상
+    const en = room.settings.enabledRoles.filter((k) => k !== 'rich' && ROLE[k]);
+    const guesses = {};
+    for (const x of room.players) {
+      if (x === p) continue;
+      const r = Math.random();
+      guesses[x.id] = r < 0.4 && en.includes('citizen') ? 'citizen' : r < 0.55 && en.includes('mafia') ? 'mafia' : rnd(en);
+    }
+    act(room, p, { type: 'predict', guesses });
+    return;
+  }
+  if (p.role === 'agitator' && p.contacted && !p.s.reportUsed) { // 선동가: 믿음직한 사람을 "마피아"로 속여 공개
+    const o2 = E.AB.nightOptions(room, p);
+    if (o2 && o2.targets.length && !chance(L.skip)) {
+      const cs = o2.targets.map((id) => U.byId(room, id)).filter(Boolean);
+      const c = best(cs, (x) => (claimedRole(room, x.id, 'police') ? 120 : 0) + (claimedRole(room, x.id, 'doctor') ? 80 : 0) - sus(room, p, x) * 0.2, L.noise);
+      if (c && (room.day >= 2 || chance(0.3))) act(room, p, { type: 'night', target: c.id, mode: 'mafia' });
+    }
+    return;
+  }
   let opt = E.AB.nightOptions(room, p);
   if (!opt) return;
   if (chance(L.skip)) return;
@@ -593,7 +619,11 @@ function botVoteAbility(room, p) {
   const vo = E.AB.voteOptions(room, p); if (!vo || !vo.targets.length) return;
   const cands = vo.targets.map((id) => U.byId(room, id)).filter(Boolean), b = pm(p);
   let t;
-  if (p.role === 'detective') { // 믿을 만한 사람과 비교
+  if (p.role === 'forger') { // 위조범: 팀원을 "마피아 아님"으로, 아니면 경찰을 "마피아"로 위조
+    const mates = cands.filter((c) => c === p || knownMate(p, c));
+    const police = cands.filter((c) => !knownMate(p, c) && c !== p && claimedRole(room, c.id, 'police'));
+    t = (police.length && chance(0.5)) ? rnd(police) : (mates.length ? rnd(mates) : rnd(cands));
+  } else if (p.role === 'detective') { // 믿을 만한 사람과 비교
     const ref = best(cands, (c) => -sus(room, p, c) + (b.checks[c.id] === 'clean' ? 100 : 0), 2);
     t = ref;
   } else t = best(cands.filter((c) => !b.checks[c.id]), (c) => sus(room, p, c), lv(room, p).noise) || rnd(cands); // 밀고자: 의심스러운 사람

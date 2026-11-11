@@ -58,6 +58,7 @@ function defaultSettings() {
     gamblerHits: 3,
     revealOnDeath: false,
     jokerReveal: false,
+    jokerRevealEnd: false,
     botLevel: 'normal',
     selfVote: true,
     forcedRoles: [],
@@ -71,6 +72,7 @@ function applySettings(s, patch) {
   }
   if (patch.revealOnDeath !== undefined) s.revealOnDeath = !!patch.revealOnDeath;
   if (patch.jokerReveal !== undefined) s.jokerReveal = !!patch.jokerReveal;
+  if (patch.jokerRevealEnd !== undefined) s.jokerRevealEnd = !!patch.jokerRevealEnd;
   if (Bots.LEVEL_KEYS.includes(patch.botLevel)) s.botLevel = patch.botLevel;
   if (patch.selfVote !== undefined) s.selfVote = !!patch.selfVote;
   const ok = new Set(ROLES.map((r) => r.key));
@@ -265,6 +267,7 @@ function setPhase(room, phase) {
 function startGame(room) {
   Bots.reset(room);
   clearBeg(room); room.lastBoom = null; room.lastPick = null;
+  room.jokerBefore = null;
   const skipped = E.assignRoles(room);
   room.quiet = 0;
   room.day = 1; room.winner = null; room.votes = {}; room.voteActs = {};
@@ -289,10 +292,12 @@ function startGame(room) {
 }
 
 function endGame(room, w) {
+  w = E.prophetCheck(room, w); // 예언가: 절반 이상 맞혔다면 모든 승리를 취소하고 우승
   room.winner = w;
   addChat(room, 'sys', w.text);
   const list = room.players.map((p) => `${p.name}(${roleName(p.role)}${p.alive ? '' : '·사망'})`).join(', ');
   addChat(room, 'sys', `📋 직업 공개: ${list}`);
+  if (room.settings.jokerRevealEnd && room.jokerBefore) addChat(room, 'sys', `📜 광대가 섞기 전의 원래 직업: ${room.jokerBefore}`);
   setPhase(room, 'ended');
   for (const p of room.players) sendBacklog(room, p);
 }
@@ -354,9 +359,9 @@ function resetToLobby(room) {
   clearTimeout(room.timer); clearBeg(room); room.lastBoom = null; room.lastPick = null;
   Bots.reset(room);
   room.phase = 'lobby'; room.day = 0; room.winner = null; room.night = null; room.votes = {}; room.voteActs = {};
-  room.touches = []; room.pendingWin = null; room.endsAt = 0; room.chat = []; room.seq++;
+  room.touches = []; room.pendingWin = null; room.endsAt = 0; room.chat = []; room.seq++; room.jokerBefore = null;
   for (const p of room.players) {
-    p.role = null; p.alive = true; p.s = {}; p.team = null; p.contacted = false; p.destroyed = false; p.exorcised = false; p.blessed = false; p.blessedBy = null; p.loaning = false;
+    p.role = null; p.alive = true; p.s = {}; p.team = null; p.contacted = false; p.destroyed = false; p.exorcised = false; p.blessed = false; p.blessedBy = null; p.loaning = false; p.origRole = null; p.guess = null;
   }
   room.players = room.players.filter((p) => p.bot || p.conns.size > 0); // 접속이 끊긴 사람은 정리(봇은 유지)
   if (!byId(room, room.hostId)) { const h = room.players.find((x) => !x.bot); if (h) room.hostId = h.id; }
@@ -474,6 +479,17 @@ function handleAction(room, p, b) {
     }
     case 'night': {
       E.setNightAct(room, p, b);
+      broadcastState(room);
+      return;
+    }
+    case 'predict': { // 예언가: 첫날 밤 안에 모든 사람의 직업을 예언
+      if (p.origRole !== 'prophet') fail('예언가만 예언할 수 있어요.');
+      if (!(room.phase === 'night' && room.day === 1)) fail('예언은 첫날 밤에만 입력할 수 있어요.');
+      const g = {};
+      for (const [id, k] of Object.entries(b.guesses && typeof b.guesses === 'object' ? b.guesses : {})) {
+        if (id !== p.id && byId(room, id) && ROLE[k]) g[id] = k;
+      }
+      p.guess = g;
       broadcastState(room);
       return;
     }

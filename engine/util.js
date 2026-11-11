@@ -34,8 +34,10 @@ U.isMafiaKnown = (p) => ROLE[p.role].team === 'mafia' && (p.role === 'mafia' || 
 
 // 조사 결과에 보이는 직업 (은둔자는 마피아, 사기꾼는 흉내 낸 직업)
 U.shownRole = (p) => {
-  const r = p.s.disguise || p.role;
-  return r === 'hermit' ? 'mafia' : r;
+  const r0 = p.s.disguise || p.role;
+  const r = r0 === 'hermit' ? 'mafia' : r0;
+  if (p.s.forged) return ROLE[r].team === 'mafia' ? 'citizen' : 'mafia'; // 위조범: 조사 결과를 거꾸로 위조
+  return r;
 };
 U.shownTeam = (p) => ROLE[U.shownRole(p)].team;
 

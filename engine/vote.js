@@ -25,6 +25,7 @@ function resolveVote(room) {
   U.sys(room, `🗳 투표 결과: ${summary.length ? summary.join(', ') : '투표가 없었습니다.'}`);
 
   // 투표시간 능력은 처형 전에 상태를 기록해 둔다 (처형으로 죽어도 결과는 전달)
+  const forgeList = [];
   const abil = Object.entries(room.voteActs).map(([pid, a]) => ({ p: U.byId(room, pid), t: U.byId(room, a.target) }))
     .filter((x) => x.p && x.p.alive && x.t);
 
@@ -64,6 +65,9 @@ function resolveVote(room) {
         for (const x of doctor) p.s.known[x.id] = 'doctor';
         U.priv(room, p, `📢 밀고 성공! 경찰: ${U.names(police) || '없음'} / 의사: ${U.names(doctor) || '없음'}`);
       } else U.priv(room, p, `📢 ${t.name}님은 마피아가 아니었습니다.`);
+    } else if (p.role === 'forger' && p.contacted) {
+      U.touch(room, p, t); forgeList.push(t);
+      U.priv(room, p, `🖋 ${t.name}님의 조사 결과를 위조했습니다. (다음 투표 때까지 유지)`);
     } else if (p.role === 'detective' && p.s.detA) {
       const a = U.byId(room, p.s.detA);
       if (a) {
@@ -73,7 +77,8 @@ function resolveVote(room) {
       }
     }
   }
-  for (const p of room.players) { if (p.s) p.s.detA = null; }
+  for (const p of room.players) { if (p.s) { p.s.detA = null; p.s.forged = false; } } // 지난 위조는 끝나고 새 위조가 시작
+  for (const t of forgeList) t.s.forged = true;
   room.voteActs = {};
   room.votes = {};
   checkAssassins(room);
@@ -122,7 +127,7 @@ function checkWin(room) {
   if (M > 0 && M >= alive.length - M) return { kind: 'mafia', text: fText('mafia', '🔪 마피아 팀이 승리했습니다!'), ids: ids('mafia').concat(followersOf('mafia')) };
   // 짝(부자/거지)이 죽어서 더는 이길 수 없는 거지·부자, 혼자서는 이길 수 없는 신봉자는 시민 승리를 막지 않는다
   const hasRole = (r) => alive.some((p) => p.role === r);
-  const threat = N.filter((p) => p.role !== 'follower' && !((p.role === 'beggar' && !hasRole('rich')) || (p.role === 'rich' && !hasRole('beggar'))));
+  const threat = N.filter((p) => p.role !== 'follower' && p.role !== 'prophet' && !((p.role === 'beggar' && !hasRole('rich')) || (p.role === 'rich' && !hasRole('beggar'))));
   if (M === 0 && threat.length === 0 && C > 0) return { kind: 'citizen', text: fText('citizen', '🎉 시민 팀이 승리했습니다!'), ids: ids('citizen').concat(followersOf('citizen')) };
   if (alive.length === 1 && N.length === 1) {
     if (N[0].role === 'follower') return { kind: 'draw', text: '🤝 신봉자만 남아 승부가 나지 않아 무승부입니다.', ids: [] };
@@ -136,4 +141,19 @@ function checkWin(room) {
   return null;
 }
 
-module.exports = { resolveVote, resolveBoom, checkWin, weight };
+// 예언가: 게임이 끝났을 때 절반 이상 맞혔다면 모든 승리를 취소하고 예언가가 우승 (처음 배정된 직업 기준)
+function prophetCheck(room, w) {
+  const won = [];
+  for (const p of room.players) {
+    if (p.origRole !== 'prophet' || !p.guess) continue;
+    const others = room.players.filter((x) => x !== p);
+    if (!others.length) continue;
+    const right = others.filter((x) => p.guess[x.id] === x.origRole).length;
+    if (right * 2 >= others.length) won.push({ p, right, total: others.length });
+  }
+  if (!won.length) return w;
+  const txt = won.map((x) => `예언가 ${x.p.name}님(${x.right}/${x.total}명 적중)`).join(', ');
+  return { kind: 'prophet', text: `🔮 ${txt}의 예언이 절반 이상 맞았습니다! 모든 승리가 취소되고 예언가가 우승했습니다!`, ids: won.map((x) => x.p.id), was: w };
+}
+
+module.exports = { resolveVote, resolveBoom, checkWin, weight, prophetCheck };
