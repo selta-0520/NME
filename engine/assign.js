@@ -69,7 +69,9 @@ function assignRoles(room) {
   // ---------------- 마피아 팀
   const mafiaKeys = keysOf('mafia');
   const sizeSet = Math.max(0, s.mafiaSize | 0); // 0 = 자동(인원 ÷ 4), 그 외 = 마피아 팀 총 인원
+  const nSize = Math.max(0, s.neutralSize | 0), cSize = Math.max(0, s.citizenSize | 0);
   let M = sizeSet > 0 ? sizeSet : Math.max(1, Math.floor(n / 4));
+  if (sizeSet === 0 && cSize > 0) M = Math.max(1, n - cSize - nSize); // 마피아는 자동이고 시민 인원을 정했다면 나머지가 마피아
   const minMafia = mafiaKeys.reduce((a, k) => a + rng(k)[0] * SIZE(k), 0);
   const maxM = Math.max(1, Math.ceil(n / 2) - 1); // 시작하자마자 마피아 팀이 이기지 않도록
   if (sizeSet > 0 && minMafia > sizeSet) notes.push(`⚠ 마피아 팀 인원(${sizeSet}명)보다 직업별 최소 인원 합(${minMafia}명)이 커서 최소 인원을 우선했어요.`);
@@ -98,7 +100,7 @@ function assignRoles(room) {
       if (nUsed + SIZE(k) <= neutralHard) { add(k); nUsed += SIZE(k); } else if (!skipped.includes(k)) skipped.push(k);
     }
   }
-  const neutralCap = Math.max(0, Math.min(s.neutralMax, Math.floor(n / 5), neutralHard));
+  const neutralCap = nSize > 0 ? Math.max(0, Math.min(nSize, neutralHard)) : Math.max(0, Math.min(s.neutralMax == null ? 2 : s.neutralMax, Math.floor(n / 5), neutralHard));
   for (;;) {
     const c = neutralKeys.filter((k) => cnt(k) < rng(k)[1] && nUsed + SIZE(k) <= Math.min(neutralCap, neutralHard));
     if (!c.length) break;
@@ -107,7 +109,9 @@ function assignRoles(room) {
 
   // ---------------- 시민 팀
   const citizenCount = n - M - nUsed;
-  const cUsed = fillTeam('citizen', citizenCount, 'citizen', Math.max(0, s.citizenSpecialMax));
+  const citizenSpecialCap = cSize > 0 ? citizenCount : Math.max(0, s.citizenSpecialMax == null ? 12 : s.citizenSpecialMax);
+  const cUsed = fillTeam('citizen', citizenCount, 'citizen', citizenSpecialCap);
+  if (cSize > 0 && cSize !== citizenCount) notes.push(`⚠ 마피아·중립 인원을 맞추고 나니 시민 팀은 ${citizenCount}명이 되었어요. (설정 ${cSize}명)`);
   if (cUsed < citizenCount) { // 자리가 남으면 일반 시민이 메운다 (시민을 끈 경우 안내)
     counts.citizen = cnt('citizen') + (citizenCount - cUsed);
     if (rng('citizen')[1] === 0) notes.push('⚠ 시민 팀에 넣을 수 있는 직업이 부족해 일반 시민이 들어갔어요.');

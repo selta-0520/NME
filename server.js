@@ -28,6 +28,8 @@ const LIMITS = {
   voteSec: [10, 120],
   defenseSec: [5, 60],
   mafiaSize: [0, 25],
+  neutralSize: [0, 25],
+  citizenSize: [0, 50],
   mafiaSpecialMax: [0, 10],
   citizenSpecialMax: [0, 40],
   neutralMax: [0, 10],
@@ -58,6 +60,8 @@ function defaultSettings() {
     finalDefense: true,
     defenseSec: 15,
     mafiaSize: 0,
+    neutralSize: 0,
+    citizenSize: 0,
     mafiaSpecialMax: 2,
     citizenSpecialMax: 12,
     neutralMax: 2,
@@ -600,6 +604,35 @@ function handleAction(room, p, b) {
 
 Bots.init({ handleAction, rooms });
 
+// ---------------------------------------------------------------- 보안
+// 보안 헤더: 다른 사이트가 화면을 끼워 넣거나(클릭재킹) 외부 스크립트를 불러오지 못하게 막는다
+const CSP = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; media-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
+function secHeaders(req, res) {
+  res.setHeader('Content-Security-Policy', CSP);
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('Referrer-Policy', 'no-referrer'); // 주소에 든 접속 코드가 다른 곳으로 새지 않게
+  res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=(), payment=(), usb=()');
+  res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
+  res.setHeader('Cross-Origin-Resource-Policy', 'same-origin');
+  if (req.headers['x-forwarded-proto'] === 'https') res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+}
+const clientIp = (req) => String(req.headers['x-forwarded-for'] || '').split(',')[0].trim() || req.socket.remoteAddress || '?';
+// 아주 단순한 요청 횟수 제한 (IP 기준). 한도: [시간(ms), 최대 횟수]
+const RATE = { create: [60000, 8], join: [60000, 60], action: [10000, 300], events: [60000, 120], check: [60000, 120] };
+const hits = new Map();
+function limited(ip, kind) {
+  if (process.env.NME_NO_RATE) return false; // 시험용
+  const [win, max] = RATE[kind], key = kind + '|' + ip, now = Date.now();
+  let h = hits.get(key);
+  if (!h || now - h.t > win) { h = { t: now, n: 0 }; hits.set(key, h); }
+  return ++h.n > max;
+}
+setInterval(() => { const now = Date.now(); for (const [k, h] of hits) if (now - h.t > 120000) hits.delete(k); }, 60000).unref();
+const MAX_ROOMS = 300, MAX_CONNS_PER_IP = 120;
+const ipConns = new Map();
+const safeEq = (a, b) => { const x = Buffer.from(String(a)), y = Buffer.from(String(b)); return x.length === y.length && crypto.timingSafeEqual(x, y); };
+
 // ---------------------------------------------------------------- HTTP
 const INDEX = path.join(__dirname, 'index.html');
 function json(res, code, obj) {
@@ -609,6 +642,7 @@ function json(res, code, obj) {
 function readBody(req) {
   return new Promise((resolve, reject) => {
     let d = '';
+    if (!/^application\/json/i.test(req.headers['content-type'] || '')) { reject(new Err('잘못된 요청이에요.')); return; }
     req.on('data', (c) => { d += c; if (d.length > 20000) { reject(new Err('요청이 너무 커요.')); req.destroy(); } });
     req.on('end', () => { try { resolve(d ? JSON.parse(d) : {}); } catch (e) { reject(new Err('잘못된 요청이에요.')); } });
     req.on('error', reject);
@@ -618,12 +652,19 @@ function cleanName(v) { return String(v || '').replace(/\s+/g, ' ').trim().slice
 function auth(code, token) {
   const room = rooms.get(String(code || '').toUpperCase());
   if (!room) return {};
-  const p = room.players.find((x) => x.token === token);
+  const p = typeof token === 'string' && token.length === 32 ? room.players.find((x) => safeEq(x.token, token)) : null;
   return { room, p };
 }
 
 const server = http.createServer(async (req, res) => {
   try {
+    secHeaders(req, res);
+    const ip = clientIp(req);
+    if (req.headers['x-forwarded-proto'] === 'http' && req.method === 'GET') { // https 로만 쓰도록
+      res.writeHead(301, { Location: 'https://' + (req.headers.host || '') + req.url }); return res.end();
+    }
+    if (!['GET', 'POST'].includes(req.method)) return json(res, 405, { error: '허용되지 않는 요청이에요.' });
+    if ((req.url || '').length > 600) return json(res, 414, { error: '주소가 너무 길어요.' });
     const url = new URL(req.url, 'http://localhost');
     const route = `${req.method} ${url.pathname}`;
 
@@ -636,12 +677,16 @@ const server = http.createServer(async (req, res) => {
       return json(res, 200, { roles: ROLES, teams: TEAM_NAMES, limits: LIMITS, caps: Object.fromEntries(ROLES.map((r) => [r.key, roleCap(r.key)])), min: MIN_PLAYERS, max: MAX_PLAYERS });
     }
     if (route === 'GET /api/check') {
+      if (limited(ip, 'check')) return json(res, 429, { error: '요청이 너무 많아요. 잠시 후 다시 해 주세요.' });
       const { p } = auth(url.searchParams.get('code'), url.searchParams.get('token'));
       return json(res, p ? 200 : 404, { ok: !!p });
     }
     if (route === 'GET /api/events') {
       const { room, p } = auth(url.searchParams.get('code'), url.searchParams.get('token'));
       if (!p) return json(res, 404, { error: '방을 찾을 수 없어요.' });
+      if (limited(ip, 'events')) return json(res, 429, { error: '요청이 너무 많아요. 잠시 후 다시 해 주세요.' });
+      if ((ipConns.get(ip) || 0) >= MAX_CONNS_PER_IP || p.conns.size >= 6) return json(res, 429, { error: '접속이 너무 많아요.' });
+      ipConns.set(ip, (ipConns.get(ip) || 0) + 1);
       res.writeHead(200, {
         'Content-Type': 'text/event-stream; charset=utf-8', 'Cache-Control': 'no-cache, no-transform',
         Connection: 'keep-alive', 'X-Accel-Buffering': 'no',
@@ -654,6 +699,7 @@ const server = http.createServer(async (req, res) => {
       broadcastState(room);
       const hb = setInterval(() => { try { res.write(': ping\n\n'); } catch (e) { /* */ } }, 15000);
       req.on('close', () => {
+        ipConns.set(ip, Math.max(0, (ipConns.get(ip) || 1) - 1));
         clearInterval(hb);
         p.conns.delete(res);
         if (rooms.has(room.code)) onDisconnect(room, p);
@@ -661,6 +707,8 @@ const server = http.createServer(async (req, res) => {
       return;
     }
     if (req.method === 'POST' && url.pathname === '/api/create') {
+      if (limited(ip, 'create')) return json(res, 429, { error: '방을 너무 많이 만들었어요. 잠시 후 다시 해 주세요.' });
+      if (rooms.size >= MAX_ROOMS) return json(res, 503, { error: '지금은 방이 가득 찼어요. 잠시 후 다시 해 주세요.' });
       const b = await readBody(req);
       const name = cleanName(b.name);
       if (!name) return json(res, 400, { error: '이름을 입력해 주세요.' });
@@ -668,6 +716,7 @@ const server = http.createServer(async (req, res) => {
       return json(res, 200, { code: room.code, token: player.token, id: player.id });
     }
     if (req.method === 'POST' && url.pathname === '/api/join') {
+      if (limited(ip, 'join')) return json(res, 429, { error: '시도가 너무 많아요. 잠시 후 다시 해 주세요.' });
       const b = await readBody(req);
       const name = cleanName(b.name);
       if (!name) return json(res, 400, { error: '이름을 입력해 주세요.' });
@@ -683,6 +732,7 @@ const server = http.createServer(async (req, res) => {
       return json(res, 200, { code: room.code, token: p.token, id: p.id });
     }
     if (req.method === 'POST' && url.pathname === '/api/action') {
+      if (limited(ip, 'action')) return json(res, 429, { error: '너무 빨리 누르고 있어요.' });
       const b = await readBody(req);
       const { room, p } = auth(b.code, b.token);
       if (!p) return json(res, 404, { error: '방을 찾을 수 없어요.' });
@@ -696,6 +746,8 @@ const server = http.createServer(async (req, res) => {
     try { json(res, 500, { error: '서버 오류가 발생했어요.' }); } catch (x) { /* */ }
   }
 });
+
+server.requestTimeout = 20000; server.headersTimeout = 10000; // 느리게 보내며 붙잡는 접속 차단
 
 // 오래 방치된 방 정리
 setInterval(() => {
