@@ -34,25 +34,32 @@ function copyRoleNote(room, p, role) {
 }
 
 // 다시 나눠 줄 때 뽑을 수 있는 직업 (광대·짝이 필요한 직업·게임 시작 때만 의미 있는 직업은 제외)
-const REROLL_SKIP = new Set(['joker', 'couple', 'beggar', 'rich', 'prophet']);
+const REROLL_SKIP = new Set(['joker', 'rich', 'prophet']); // 거지는 부자와 함께(2자리), 커플도 2자리로 뽑는다
 function rerollRoles(room, list, joker, newRole) {
   const s = room.settings, enabled = new Set(s.enabledRoles || []);
   const teamOfRole = (k) => ROLE[k].team;
   const slots = { mafia: 0, citizen: 0, neutral: 0 };
   for (const p of list) {
-    if (p === joker) { slots[teamOfRole(newRole)]++; continue; }
+    if (p === joker) continue; // 광대 자리는 시민/마피아가 그대로 받는다
     slots[teamOfRole(p.role)]++; // 팀별 인원은 그대로, 직업만 새로 뽑는다
   }
   const maxOf = (k) => (k === 'mafia' || k === 'citizen' ? 99 : (s.roleMax && s.roleMax[k] != null ? Math.max(1, s.roleMax[k] | 0) : 1));
   const out = [];
   for (const team of ['mafia', 'citizen', 'neutral']) {
     const used = {};
-    const poolFor = (useEnabled) => ROLES.filter((r) => r.team === team && !REROLL_SKIP.has(r.key) && (!useEnabled || enabled.has(r.key) || r.key === 'mafia' || r.key === 'citizen')).map((r) => r.key);
-    for (let i = 0; i < slots[team]; i++) {
-      let c = poolFor(true).filter((k) => (used[k] || 0) < maxOf(k));
-      if (!c.length) c = poolFor(false).filter((k) => (used[k] || 0) < maxOf(k));
+    const on = (k) => enabled.has(k) || k === 'mafia' || k === 'citizen';
+    const poolFor = (useEnabled) => ROLES.filter((r) => r.team === team && !REROLL_SKIP.has(r.key) && (!useEnabled || (on(r.key) && (r.key !== 'beggar' || enabled.has('rich'))))).map((r) => r.key);
+    const size = (k) => (k === 'couple' || k === 'beggar' ? 2 : 1);
+    let left = slots[team];
+    while (left > 0) {
+      const ok = (k) => (used[k] || 0) < maxOf(k) && size(k) <= left;
+      let c = poolFor(true).filter(ok);
+      if (!c.length) c = poolFor(false).filter(ok);
       const k = c.length ? U.pick(c) : (team === 'mafia' ? 'mafia' : 'citizen');
-      used[k] = (used[k] || 0) + 1; out.push({ team, k });
+      used[k] = (used[k] || 0) + 1; left -= size(k);
+      if (k === 'couple') out.push({ team, k }, { team, k });
+      else if (k === 'beggar') out.push({ team, k: 'beggar' }, { team, k: 'rich' });
+      else out.push({ team, k });
     }
   }
   return out;
