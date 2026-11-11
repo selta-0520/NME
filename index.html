@@ -152,6 +152,13 @@
       <button id="joinBtn" class="ghost" style="white-space:nowrap">입장</button>
     </div>
   </div>
+  <div class="card">
+    <div class="row" style="align-items:center;justify-content:space-between"><span style="color:var(--dim);font-size:13px">🌐 공개방 (누구나 들어갈 수 있어요)</span><button id="pubRefresh" class="ghost" style="padding:6px 10px;font-size:12px">새로고침</button></div>
+    <div class="chips" id="pubList"><span class="hint">불러오는 중…</span></div>
+  </div>
+  <div class="card">
+    <details id="statCard"><summary style="cursor:pointer;color:var(--dim);font-size:13px">📊 내 전적 (이 기기에 저장돼요)</summary><div id="statBody" style="margin-top:8px;font-size:14px"></div></details>
+  </div>
 </div>
 
 <div id="room" class="screen" hidden>
@@ -160,6 +167,7 @@
   <section id="main"></section>
   <section id="chatbox">
     <div id="msgs"></div>
+    <div class="chips" id="quick" style="padding:0 12px 4px"></div>
     <div id="chatlabel"></div>
     <form id="chatform" autocomplete="off">
       <input type="text" id="chatinput" maxlength="200" placeholder="메시지 입력">
@@ -223,6 +231,50 @@ $('#nameInput').value = lsGet('dni-name');
   const c = new URLSearchParams(location.search).get('code');
   if (c) $('#codeInput').value = c.toUpperCase().slice(0, 4);
 }
+// ---- 🌐 공개방 목록
+async function loadPublic() {
+  const box = $('#pubList'); if (!box) return;
+  try {
+    const r = await fetch('/api/rooms'); const j = await r.json();
+    box.innerHTML = '';
+    if (!j.rooms || !j.rooms.length) { box.append(h('span', { class: 'hint' }, '지금 열린 공개방이 없어요. 방 설정에서 "공개방"을 켜면 여기에 보여요.')); return; }
+    for (const x of j.rooms) box.append(h('button', { class: 'ghost', onclick: () => { $('#codeInput').value = x.code; $('#joinBtn').click(); } }, `${x.host || '?'}의 방 · ${x.count}명`));
+  } catch (e) { box.innerHTML = ''; box.append(h('span', { class: 'hint' }, '목록을 불러오지 못했어요.')); }
+}
+$('#pubRefresh').onclick = loadPublic;
+loadPublic();
+
+// ---- 📊 내 전적 (이 기기에만 저장)
+function statGet() { try { return JSON.parse(localStorage.getItem('nme_stats') || 'null') || { games: 0, wins: 0, roles: {} }; } catch (e) { return { games: 0, wins: 0, roles: {} }; } }
+function statSet(s) { try { localStorage.setItem('nme_stats', JSON.stringify(s)); } catch (e) { /* */ } }
+let lastStatKey = '';
+function recordStats() {
+  if (!st || st.phase !== 'ended' || !st.me || !st.me.role) return;
+  const key = st.code + '|' + (st.winner && st.winner.text);
+  if (key === lastStatKey) return; lastStatKey = key;
+  const win = !!(st.winner && st.winner.ids && st.winner.ids.includes(st.meId));
+  const s = statGet(); s.games++; if (win) s.wins++;
+  const r = (s.roles[st.me.role] = s.roles[st.me.role] || { g: 0, w: 0 }); r.g++; if (win) r.w++;
+  statSet(s);
+}
+function renderStats() {
+  const box = $('#statBody'); if (!box) return;
+  const s = statGet(); box.innerHTML = '';
+  if (!s.games) { box.append(h('div', { class: 'hint' }, '아직 기록이 없어요. 한 판 끝내면 쌓여요!')); return; }
+  box.append(h('div', null, `총 ${s.games}판 · ${s.wins}승 (${Math.round(s.wins * 100 / s.games)}%)`));
+  const rows = Object.entries(s.roles).sort((a, b) => b[1].g - a[1].g).slice(0, 8);
+  for (const [k, v] of rows) box.append(h('div', { class: 'hint' }, `${ROLE[k] ? ROLE[k].name : k}: ${v.g}판 ${v.w}승`));
+  box.append(h('button', { class: 'ghost', style: 'margin-top:8px;padding:6px 10px;font-size:12px', onclick: () => { if (confirm('전적을 지울까요?')) { statSet({ games: 0, wins: 0, roles: {} }); renderStats(); } } }, '전적 지우기'));
+}
+renderStats();
+
+// ---- 💬 빠른 반응
+const QUICK = ['🤔 수상해요', '👍 동의해요', '🙋 저는 시민이에요', '🕊 신중하게 투표해요', '🔍 근거가 뭐죠?', '😅 잘 모르겠어요'];
+{
+  const q = $('#quick');
+  for (const text of QUICK) q.append(h('button', { type: 'button', onclick: () => act('chat', { text }) }, text));
+}
+
 async function enter(path, body) {
   const name = $('#nameInput').value.trim();
   if (!name) { toast('이름을 먼저 입력해 주세요.'); return; }
@@ -415,10 +467,12 @@ function render() {
   if (st.phase === 'lobby') { clearMemo(); if (sess) store.set(sess); } // 대기실로 돌아오면 새로고침해도 다시 들어올 수 있게 저장
   else if (st.phase === 'ended') { clearMemo(); store.clear(); } // 게임이 끝나면 저장된 접속 정보·메모를 초기화
   Music.setScene(st.phase);
+  recordStats();
   renderTop(); renderMain();
   const ci = chatInfo();
   $('#chatlabel').textContent = ci.label;
   $('#chatinput').disabled = !ci.can; $('#chatsend').disabled = !ci.can;
+  for (const b of $('#quick').children) b.disabled = !ci.can;
   $('#chatinput').placeholder = ci.can ? '메시지 입력' : '말할 수 없는 시간이에요';
   if (settingsOpen) syncSettings();
 }
@@ -612,6 +666,7 @@ function renderMain() {
   if (st.phase === 'ended') {
     const w = st.winner || { kind: 'draw', text: '게임 종료' };
     main.append(h('div', { class: 'card banner ' + w.kind }, w.text));
+    endExtras(main);
   } else if (me.role) {
     const r = ROLE[me.role];
     const card = h('div', { class: 'card role-card ' + r.team },
@@ -692,7 +747,7 @@ function renderMain() {
 
   const acts = h('div', { class: 'actions' });
   if (st.phase === 'ended') {
-    if (isHost()) acts.append(h('button', { onclick: () => act('reset') }, '🔄 다시 하기 (대기실로)'));
+    if (isHost()) { acts.append(h('button', { onclick: () => act('again') }, '▶ 같은 멤버로 바로 다시 시작')); acts.append(h('button', { class: 'ghost', onclick: () => act('reset') }, '🔄 대기실로')); }
     else acts.append(h('div', { class: 'hint' }, '방장이 다시 시작하길 기다리는 중…'));
     acts.append(h('button', { class: 'ghost', onclick: () => { act('leave'); leaveLocal(); } }, '나가기'));
   } else {
@@ -701,6 +756,33 @@ function renderMain() {
   }
   main.append(acts);
   if (hadFocus && $('#progtext')) { const el = $('#progtext'); el.focus(); el.setSelectionRange(el.value.length, el.value.length); }
+}
+
+// 🏅 칭호 + 📼 리플레이
+function endExtras(main) {
+  const nm = (id) => { const q = pById(id); return q ? q.name : '?'; };
+  const rn = (id) => { const q = pById(id); return q && q.role && ROLE[q.role] ? ROLE[q.role].name : ''; };
+  if (st.titles && st.titles.length) {
+    const c = h('div', { class: 'card' }, h('div', { class: 'albl' }, '🏅 이번 판 칭호'));
+    for (const x of st.titles) c.append(h('div', { class: 'note' }, `${x.icon} ${x.title} — ${x.ids.map(nm).join(', ')} · ${x.desc}`));
+    main.append(c);
+  }
+  if (st.replay && st.replay.length) {
+    const d = h('details', { class: 'card' }, h('summary', { style: 'cursor:pointer;font-weight:700' }, '📼 이번 판 다시 보기 (밤 행동·투표)'));
+    for (const e of st.replay) {
+      const box = h('div', { style: 'margin-top:10px' }, h('div', { class: 'albl' }, e.kind === 'night' ? `🌙 ${e.day}일차 밤` : `🗳 ${e.day}일차 투표`));
+      if (e.kind === 'night') {
+        for (const a of e.acts || []) if (a.to) box.append(h('div', { class: 'note' }, `${nm(a.by)}(${a.role && ROLE[a.role] ? ROLE[a.role].name : '?'}) → ${nm(a.to)}`));
+      } else {
+        const by = {};
+        for (const [v, tg] of e.votes || []) (by[tg] = by[tg] || []).push(nm(v));
+        for (const [tg, vs] of Object.entries(by)) box.append(h('div', { class: 'note' }, `${tg === 'skip' ? '기권' : nm(tg) + '(' + rn(tg) + ')'} ← ${vs.join(', ')}`));
+      }
+      for (const l of e.lines || []) box.append(h('div', { class: 'hint' }, l));
+      d.append(box);
+    }
+    main.append(d);
+  }
 }
 
 function renderLobby(main) {
@@ -737,6 +819,13 @@ function closeSettings() { settingsOpen = false; $('#modal').hidden = true; }
 const closeModal = closeSettings;
 $('#modal').addEventListener('click', (e) => { if (e.target.id === 'modal') closeSettings(); });
 
+const CLASSIC_KEYS = ['police', 'doctor', 'soldier', 'reporter', 'politician', 'spy', 'madam', 'thug', 'detective', 'bodyguard'];
+const PRESETS = [
+  { name: '클래식', patch: () => ({ enabledRoles: ['mafia', 'citizen', ...CLASSIC_KEYS], mafiaSpecialMax: 1, citizenSpecialMax: 5, neutralMax: 0, mafiaSize: 0, citizenSize: 0, neutralSize: 0 }) },
+  { name: '혼돈(전부)', patch: () => ({ enabledRoles: meta.roles.map((r) => r.key), mafiaSpecialMax: 2, citizenSpecialMax: 12, neutralMax: 2, mafiaSize: 0, citizenSize: 0, neutralSize: 0 }) },
+  { name: '중립 파티', patch: () => ({ enabledRoles: meta.roles.map((r) => r.key), mafiaSpecialMax: 1, citizenSpecialMax: 6, neutralMax: 5, mafiaSize: 0, citizenSize: 0, neutralSize: 0 }) },
+  { name: '마피아 팀 파티', patch: () => ({ enabledRoles: meta.roles.filter((r) => r.team === 'mafia' || ['citizen', 'police', 'doctor', 'soldier', 'bodyguard', 'detective'].includes(r.key)).map((r) => r.key), mafiaSpecialMax: 4, citizenSpecialMax: 5, neutralMax: 0, mafiaSize: 0, citizenSize: 0, neutralSize: 0 }) },
+];
 function numField(key, label, unit) {
   const [lo, hi] = meta.limits[key];
   return h('div', { class: 'field' },
@@ -802,6 +891,14 @@ function buildSettings() {
       h('input', { type: 'checkbox', 'data-key': 'selfVote', style: 'width:20px;height:20px', onchange: (e) => sendPatch({ selfVote: e.target.checked }) })),
     h('label', { class: 'field' }, h('span', null, '죽으면 직업 공개'),
       h('input', { type: 'checkbox', 'data-key': 'revealOnDeath', style: 'width:20px;height:20px', onchange: (e) => sendPatch({ revealOnDeath: e.target.checked }) })),
+    h('h3', null, '🎲 재미 옵션'),
+    h('label', { class: 'field' }, h('span', null, '랜덤 이벤트 (2일차부터 낮마다 가끔: 힌트·짧은 토론·익명)'),
+      h('input', { type: 'checkbox', 'data-key': 'randomEvents', style: 'width:20px;height:20px', onchange: (e) => sendPatch({ randomEvents: e.target.checked }) })),
+    h('label', { class: 'field' }, h('span', null, '공개방 (처음 화면의 공개방 목록에 보이기)'),
+      h('input', { type: 'checkbox', 'data-key': 'publicRoom', style: 'width:20px;height:20px', onchange: (e) => sendPatch({ publicRoom: e.target.checked }) })),
+    h('h3', null, '🎭 직업 조합 프리셋'),
+    h('div', { class: 'note' }, '누르면 사용할 직업과 팀별 특수 직업 수가 한 번에 바뀌어요. (세부 인원은 아래에서 다시 고칠 수 있어요)'),
+    h('div', { class: 'chips' }, PRESETS.map((x) => h('button', { class: 'ghost', onclick: () => { if (host && confirm(`"${x.name}" 프리셋을 적용할까요?`)) sendPatch(x.patch()); } }, x.name))),
     h('h3', null, '🃏 광대: 직업을 섞는 방식'),
     h('div', { class: 'seg' }, [['shuffle', '있던 직업 섞기'], ['reroll', '전체 직업에서 새로 뽑기']].map(([k, l]) =>
       h('button', { class: 'ghost', 'data-jm': k, onclick: () => { if (host) sendPatch({ jokerMode: k }); } }, l))),

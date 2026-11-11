@@ -21,6 +21,9 @@ const LEVELS = {
   extreme: { noise: 3,  think: 1,    skip: 0,    mistake: 0,    speak: 0.95, consensus: 0.93, coord: true,  counter: true,  fake: true,  defend: 1,    intent: 0.9, sacrifice: true,  hunt: true,  once: 0.7,  band: 9, wise: 1 },
 };
 const LEVEL_KEYS = Object.keys(LEVELS);
+// 봇 성격(판마다 무작위): talk = 말 많은 정도, sus = 의심을 입 밖에 내는 문턱(클수록 쉽게 지목)
+const PERSONAS = [{ talk: 1.5, sus: 0 }, { talk: 0.55, sus: 0 }, { talk: 1, sus: 5 }, { talk: 0.9, sus: -4 }];
+const persona = (p) => { const b = pm(p); if (!b.persona) b.persona = PERSONAS[crypto.randomInt(PERSONAS.length)]; return b.persona; };
 const FILLERS = ['안녕하세요! 다들 잘 부탁해요.', '아직은 단서가 없네요. 의견 좀 들어봐요.', '어제 밤에 무슨 일이 있었죠?', '조용한 사람이 신경 쓰이네요.', '투표는 신중하게 해요.', '일단 지켜볼게요.', '의심 가는 사람 있어요?'];
 const ONCE = new Set(['reporter', 'priest', 'angel', 'scientist']);
 const effRole = (p) => (p.role === 'thief' && p.s.loan ? p.s.loan : p.role); // 도둑은 훔친 능력의 직업처럼 행동
@@ -611,7 +614,7 @@ function botSpeak(room, p) {
   const t = topSuspect(room, p);
   if (t && chance(0.8)) {
     const sc = sus(room, p, t);
-    if (sc > (L.think >= 0.9 ? 12 : 8)) {
+    if (sc > (L.think >= 0.9 ? 12 : 8) - persona(p).sus) {
       const same = b.lastTop === t.id && b.lastTopDay === room.day;
       if (same) {
         if (b.intentSaid !== room.day && chance(L.intent)) { b.intentSaid = room.day; return void say(room, p, `이번엔 ${t.name}님에게 투표할 거예요.`, { intent: t.id }); }
@@ -745,7 +748,7 @@ function schedule(room) {
     else if (phase === 'day') {
       syncPriv(room, p);
       if (p.role === 'police') at(0.02, 0.15, () => { sync(room, p); announcePolice(room, p); }); // 마피아를 찾았다면 아침 일찍 알린다
-      const n = Math.max(1, Math.round(L.speak * (room.day === 1 ? 2.2 : 3.2) * (U.alive(room).length > 12 ? 0.7 : 1)));
+      const n = Math.max(1, Math.round(L.speak * persona(p).talk * (room.day === 1 ? 2.2 : 3.2) * (U.alive(room).length > 12 ? 0.7 : 1)));
       const slots = Array.from({ length: n }, () => 0.04 + Math.random() * 0.86).sort((a, b) => a - b);
       slots.forEach((f, i) => at(f, f, () => botSpeak(room, p)));
       if (chance(L.intent)) at(0.88, 0.97, () => { // 하루 끝에 투표 예고

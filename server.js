@@ -68,6 +68,8 @@ function defaultSettings() {
     gamblerHits: 3,
     revealOnDeath: false,
     jokerReveal: 'off', // off | shuffle | end
+    randomEvents: false, // 낮마다 가끔 랜덤 이벤트
+    publicRoom: false, // 공개방 목록에 보이기
     jokerMode: 'shuffle', // shuffle(있던 직업끼리 섞기) | reroll(전체 직업에서 새로 뽑기)
     botLevel: 'normal',
     selfVote: true,
@@ -82,6 +84,8 @@ function applySettings(s, patch) {
   }
   if (patch.revealOnDeath !== undefined) s.revealOnDeath = !!patch.revealOnDeath;
   if (patch.finalDefense !== undefined) s.finalDefense = !!patch.finalDefense;
+  if (patch.randomEvents !== undefined) s.randomEvents = !!patch.randomEvents;
+  if (patch.publicRoom !== undefined) s.publicRoom = !!patch.publicRoom;
   if (patch.jokerMode !== undefined && ['shuffle', 'reroll'].includes(patch.jokerMode)) s.jokerMode = patch.jokerMode;
   if (patch.jokerReveal !== undefined && ['off', 'shuffle', 'end'].includes(patch.jokerReveal)) s.jokerReveal = patch.jokerReveal;
   if (Bots.LEVEL_KEYS.includes(patch.botLevel)) s.botLevel = patch.botLevel;
@@ -158,15 +162,16 @@ function sse(res, event, data) {
   try { res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`); } catch (e) { /* 끊긴 연결 */ }
 }
 function sendToPlayer(p, event, data) { for (const res of p.conns) sse(res, event, data); }
-const pubMsg = (m) => ({ id: m.id, ch: m.ch, name: m.name, text: m.text, t: m.t });
+const pubMsg = (m) => ({ id: m.id, ch: m.ch, name: m.anon ? '익명' + m.anon : m.name, text: m.text, t: m.t });
 
 function addChat(room, ch, text, from, to) {
   const m = { id: ++room.msgId, ch, name: from ? from.name : '', from: from ? from.id : null, to: to || null,
     text, t: Date.now(), night: room.phase === 'night' };
+  if (from && ch === 'all' && room.anonDay === room.day && ['day', 'vote', 'defense', 'confirm'].includes(room.phase) && from.anonN) m.anon = from.anonN; // 익명의 날
   room.chat.push(m);
   if (room.chat.length > 400) room.chat.shift();
   for (const p of room.players) if (E.canSeeMsg(room, p, m)) sendToPlayer(p, 'chat', pubMsg(m));
-  if (from && !from.bot && ch === 'all' && (room.phase === 'day' || room.phase === 'vote' || room.phase === 'defense' || room.phase === 'confirm')) Bots.hear(room, { from: from.id, text });
+  if (from && !from.bot && !m.anon && ch === 'all' && (room.phase === 'day' || room.phase === 'vote' || room.phase === 'defense' || room.phase === 'confirm')) Bots.hear(room, { from: from.id, text });
   return m;
 }
 function sendBacklog(room, p) {
@@ -206,6 +211,7 @@ function viewFor(room, p) {
     hostId: room.hostId, meId: p.id, players, settings: s, winner: room.winner,
     minPlayers: MIN_PLAYERS, maxPlayers: MAX_PLAYERS,
   };
+  if (room.phase === 'ended') { v.replay = room.replay || []; v.titles = room.titles || []; }
   if (inGame) {
     v.me = E.meView(room, p);
     if (room.phase === 'day') v.dayAdj = (room.dayAdj && room.dayAdj[p.id]) || null;
@@ -268,12 +274,71 @@ function broadcastState(room) {
 }
 
 // ---------------------------------------------------------------- 게임 진행
+// ---- 📼 리플레이 기록: 밤마다 누가 누구를 골랐는지, 투표는 누가 누구에게 했는지, 그 결과 공지
+const SKIP_LINE = /^(☀️|🌙|🗳 투표 시간|⚖️ 찬반투표:|🛡 최후의 반론:)/;
+function logStep(room, entry, markFrom) {
+  const lines = room.chat.filter((m) => m.id > markFrom && m.ch === 'sys' && !SKIP_LINE.test(m.text)).map((m) => m.text);
+  room.replay = room.replay || [];
+  room.replay.push(Object.assign({ day: room.day, lines }, entry));
+  room.replayMark = room.msgId;
+}
+// 🏅 끝난 뒤 칭호
+function makeTitles(room) {
+  const out = [], rp = room.replay || [];
+  const team = (id) => { const q = byId(room, id); return q && q.role ? ROLE[q.role].team : null; };
+  const hit = { good: {}, bad: {} }, victims = [];
+  for (const e of rp) {
+    if (e.kind !== 'vote') continue;
+    for (const d of e.died || []) {
+      const tm = team(d); if (!tm || tm === 'neutral') continue;
+      if (tm === 'citizen') victims.push(d);
+      for (const [vid, tid] of e.votes || []) if (tid === d) { const o = tm === 'mafia' ? hit.good : hit.bad; o[vid] = (o[vid] || 0) + 1; }
+    }
+  }
+  const top = (o) => { const e = Object.entries(o).sort((a, b) => b[1] - a[1]); if (!e.length) return null; const m = e[0][1]; return { ids: e.filter((x) => x[1] === m).map((x) => x[0]), n: m }; };
+  const g = top(hit.good); if (g) out.push({ icon: '🕵', title: '명탐정', desc: `마피아 팀 처형에 가장 많이 투표 (${g.n}번)`, ids: g.ids });
+  const b = top(hit.bad); if (b) out.push({ icon: '🤦', title: '오판왕', desc: `무고한 시민 처형에 가장 많이 투표 (${b.n}번)`, ids: b.ids });
+  if (victims.length) out.push({ icon: '🥲', title: '억울한 희생양', desc: '투표로 처형된 시민 팀', ids: victims.slice(0, 4) });
+  const chats = room.players.filter((x) => (x.chats || 0) > 0).sort((x, y) => y.chats - x.chats);
+  if (chats.length && chats[0].chats >= 3) out.push({ icon: '💬', title: '수다왕', desc: `전체 대화 ${chats[0].chats}번`, ids: chats.filter((x) => x.chats === chats[0].chats).map((x) => x.id) });
+  const real = room.players.filter((x) => !x.bot);
+  const quiet = real.slice().sort((x, y) => (x.chats || 0) - (y.chats || 0))[0];
+  if (quiet && real.length > 1 && (quiet.chats || 0) <= 1 && chats.length && chats[0].chats >= 5) out.push({ icon: '🤐', title: '과묵한 사람', desc: '거의 말하지 않았어요', ids: [quiet.id] });
+  const alive = alivePlayers(room);
+  if (alive.length === 1) out.push({ icon: '🏃', title: '마지막 생존자', desc: '끝까지 살아남았어요', ids: [alive[0].id] });
+  return out;
+}
+
+// 🎲 랜덤 이벤트 (설정에서 켠 경우, 2일차부터 낮마다 30%)
+function rollEvent(room) {
+  room.eventToday = null; room.anonDay = 0;
+  if (!room.settings.randomEvents || room.day < 2 || Math.random() > 0.3) return;
+  const alive = alivePlayers(room);
+  const kinds = ['hint', 'short', 'anon'];
+  const k = kinds[crypto.randomInt(kinds.length)];
+  room.eventToday = k;
+  if (k === 'hint') {
+    const n = alive.filter((x) => ROLE[x.role].team === 'mafia').length;
+    addChat(room, 'sys', `🎲 오늘의 이벤트 — 💡 힌트의 날: 지금 살아 있는 마피아 팀은 ${n}명이에요.`);
+  } else if (k === 'short') {
+    addChat(room, 'sys', '🎲 오늘의 이벤트 — ⏳ 짧은 토론의 날: 오늘 토론 시간이 절반이에요!');
+  } else {
+    alive.forEach((x, i) => { x.anonN = 0; });
+    const order = shuffleArr(alive.slice()); order.forEach((x, i) => { x.anonN = i + 1; });
+    room.anonDay = room.day;
+    addChat(room, 'sys', '🎲 오늘의 이벤트 — 🎭 익명의 날: 오늘 대화에서는 이름이 가려져요. 말투와 내용으로 추리하세요!');
+  }
+}
+const shuffleArr = (a) => { for (let i = a.length - 1; i > 0; i--) { const j = crypto.randomInt(i + 1); [a[i], a[j]] = [a[j], a[i]]; } return a; };
+
 function setPhase(room, phase) {
   clearTimeout(room.timer);
   room.phase = phase;
   room.seq++;
   const s = room.settings;
-  const sec = phase === 'night' ? s.nightSec : phase === 'day' ? s.daySec : phase === 'vote' ? s.voteSec : phase === 'defense' ? s.defenseSec : phase === 'confirm' ? CONFIRM_SEC : phase === 'last' ? LAST_SEC : 0;
+  if (phase === 'day') rollEvent(room);
+  let sec = phase === 'night' ? s.nightSec : phase === 'day' ? s.daySec : phase === 'vote' ? s.voteSec : phase === 'defense' ? s.defenseSec : phase === 'confirm' ? CONFIRM_SEC : phase === 'last' ? LAST_SEC : 0;
+  if (phase === 'day' && room.eventToday === 'short') sec = Math.max(15, Math.round(sec / 2)); // ⏳ 짧은 토론의 날
   if (sec) {
     room.endsAt = Date.now() + sec * 1000;
     const seq = room.seq;
@@ -292,10 +357,11 @@ function setPhase(room, phase) {
 function startGame(room) {
   Bots.reset(room);
   clearBeg(room); room.lastBoom = null; room.lastPick = null;
-  room.jokerBefore = null;
+  room.jokerBefore = null; room.replay = []; room.titles = []; room.eventToday = null; room.anonDay = 0;
+  for (const x of room.players) x.chats = 0;
   const skipped = E.assignRoles(room);
   room.quiet = 0;
-  room.day = 1; room.winner = null; room.votes = {}; room.voteActs = {};
+  room.day = 1; room.winner = null; room.replayMark = room.msgId; room.votes = {}; room.voteActs = {};
   addChat(room, 'sys', '🎭 게임이 시작되었습니다! 직업이 배정되었어요.');
   if (skipped && skipped.length) addChat(room, 'sys', `⚠ 인원이 부족해 필수 직업 중 ${skipped.map(roleName).join(', ')}은(는) 이번 판에 넣지 못했어요.`);
   for (const t of room.assignNotes || []) addChat(room, 'sys', t);
@@ -319,6 +385,7 @@ function startGame(room) {
 function endGame(room, w) {
   w = E.prophetCheck(room, w); // 예언가: 절반 이상 맞혔다면 모든 승리를 취소하고 우승
   room.winner = w;
+  try { room.titles = makeTitles(room); } catch (e) { room.titles = []; console.error('칭호 오류', e); }
   addChat(room, 'sys', w.text);
   const list = room.players.map((p) => `${p.name}(${roleName(p.role)}${p.alive ? '' : '·사망'})`).join(', ');
   addChat(room, 'sys', `📋 직업 공개: ${list}`);
@@ -339,7 +406,10 @@ function safeAdvance(room) {
 function advance(room) {
   if (room.phase === 'night') {
     const before = alivePlayers(room).map((x) => x.id);
+    const acts = Object.entries((room.night && room.night.acts) || {}).map(([id, a]) => ({ by: id, role: (byId(room, id) || {}).role, to: a.target, mode: a.mode || null }));
+    const mark = room.replayMark || 0;
     E.resolveNight(room);
+    logStep(room, { kind: 'night', acts, died: before.filter((id) => { const x = byId(room, id); return x && !x.alive; }) }, mark);
     Bots.afterResolve(room, before, null);
     const w = E.checkWin(room);
     if (w) endGame(room, w); else setPhase(room, 'day');
@@ -376,7 +446,9 @@ function advance(room) {
 // 투표 결과를 실제로 처리 (defense 가 있으면 최후의 반론·찬반투표를 거친 결과)
 function finishVote(room, defense) {
   const before = alivePlayers(room).map((x) => x.id), snap = Object.assign({}, room.votes);
+  const mark = room.replayMark || 0;
   E.resolveVote(room, defense ? { defense } : null);
+  logStep(room, { kind: 'vote', votes: Object.entries(snap), died: before.filter((id) => { const x = byId(room, id); return x && !x.alive; }) }, mark);
   room.defense = null;
   Bots.afterResolve(room, before, snap);
   if (room.lastBoom && alivePlayers(room).length) { // 처형된 테러리스트가 함께 죽을 사람을 고르는 시간
@@ -464,6 +536,7 @@ function handleAction(room, p, b) {
       const info = E.chatInfo(room, p);
       if (!info.ch) fail(info.label.replace(/^\S+\s/, ''));
       addChat(room, info.ch, text, p);
+      if (info.ch === 'all') p.chats = (p.chats || 0) + 1;
       if (p.role === 'beggar' && p.s.met && p.alive && info.ch === 'all') scheduleBeg(room); // 거지가 말했으니 카운트다운 새로 시작
       return;
     }
@@ -520,6 +593,14 @@ function handleAction(room, p, b) {
       if (!isHost) fail('방장만 다시 시작할 수 있어요.');
       if (room.phase !== 'ended') fail('게임이 끝난 뒤에 할 수 있어요.');
       resetToLobby(room);
+      return;
+    }
+    case 'again': { // 같은 사람들로 바로 다음 판
+      if (!isHost) fail('방장만 다시 시작할 수 있어요.');
+      if (room.phase !== 'ended') fail('게임이 끝난 뒤에 할 수 있어요.');
+      resetToLobby(room);
+      if (room.players.length < MIN_PLAYERS) return; // 인원이 모자라면 대기실에 머문다
+      startGame(room);
       return;
     }
     case 'leave': {
@@ -679,6 +760,13 @@ const server = http.createServer(async (req, res) => {
     if (route === 'GET /healthz') return json(res, 200, { ok: true, rooms: rooms.size });
     if (route === 'GET /api/meta') {
       return json(res, 200, { roles: ROLES, teams: TEAM_NAMES, limits: LIMITS, caps: Object.fromEntries(ROLES.map((r) => [r.key, roleCap(r.key)])), min: MIN_PLAYERS, max: MAX_PLAYERS });
+    }
+    if (route === 'GET /api/rooms') {
+      if (limited(ip, 'check')) return json(res, 429, { error: '요청이 너무 많아요. 잠시 후 다시 해 주세요.' });
+      const list = [...rooms.values()].filter((r) => r.settings.publicRoom && r.phase === 'lobby' && r.players.length < MAX_PLAYERS)
+        .sort((a, b) => b.lastActive - a.lastActive).slice(0, 30)
+        .map((r) => ({ code: r.code, host: (byId(r, r.hostId) || {}).name || '', count: r.players.length, max: MAX_PLAYERS }));
+      return json(res, 200, { rooms: list });
     }
     if (route === 'GET /api/check') {
       if (limited(ip, 'check')) return json(res, 429, { error: '요청이 너무 많아요. 잠시 후 다시 해 주세요.' });
