@@ -27,6 +27,7 @@ const LIMITS = {
   daySec: [15, 600],
   voteSec: [10, 120],
   defenseSec: [5, 60],
+  mafiaSize: [0, 25],
   mafiaSpecialMax: [0, 10],
   citizenSpecialMax: [0, 40],
   neutralMax: [0, 10],
@@ -56,13 +57,13 @@ function defaultSettings() {
     voteSec: 30,
     finalDefense: true,
     defenseSec: 15,
+    mafiaSize: 0,
     mafiaSpecialMax: 2,
     citizenSpecialMax: 12,
     neutralMax: 2,
     gamblerHits: 3,
     revealOnDeath: false,
-    jokerReveal: false,
-    jokerRevealEnd: false,
+    jokerReveal: 'off', // off | shuffle | end
     botLevel: 'normal',
     selfVote: true,
     forcedRoles: [],
@@ -76,8 +77,7 @@ function applySettings(s, patch) {
   }
   if (patch.revealOnDeath !== undefined) s.revealOnDeath = !!patch.revealOnDeath;
   if (patch.finalDefense !== undefined) s.finalDefense = !!patch.finalDefense;
-  if (patch.jokerReveal !== undefined) s.jokerReveal = !!patch.jokerReveal;
-  if (patch.jokerRevealEnd !== undefined) s.jokerRevealEnd = !!patch.jokerRevealEnd;
+  if (patch.jokerReveal !== undefined && ['off', 'shuffle', 'end'].includes(patch.jokerReveal)) s.jokerReveal = patch.jokerReveal;
   if (Bots.LEVEL_KEYS.includes(patch.botLevel)) s.botLevel = patch.botLevel;
   if (patch.selfVote !== undefined) s.selfVote = !!patch.selfVote;
   const ok = new Set(ROLES.map((r) => r.key));
@@ -316,7 +316,7 @@ function endGame(room, w) {
   addChat(room, 'sys', w.text);
   const list = room.players.map((p) => `${p.name}(${roleName(p.role)}${p.alive ? '' : '·사망'})`).join(', ');
   addChat(room, 'sys', `📋 직업 공개: ${list}`);
-  if (room.settings.jokerRevealEnd && room.jokerBefore) addChat(room, 'sys', `📜 광대가 섞기 전의 원래 직업: ${room.jokerBefore}`);
+  if (room.settings.jokerReveal === 'end' && room.jokerBefore) addChat(room, 'sys', `📜 광대가 섞기 전의 원래 직업: ${room.jokerBefore}`);
   setPhase(room, 'ended');
   for (const p of room.players) sendBacklog(room, p);
 }

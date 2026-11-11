@@ -42,7 +42,7 @@ function jokerShuffle(room, joker) {
   for (const p of room.players) { p.s.known = {}; }
   U.sys(room, '🃏 광대의 장난으로 살아있는 모든 사람의 직업이 뒤섞였습니다! 자신의 직업을 다시 확인하세요.');
   room.jokerBefore = before.join(', '); // 게임이 끝난 뒤 공개용으로 보관
-  if (room.settings.jokerReveal) U.sys(room, `📜 섞이기 전의 원래 직업: ${room.jokerBefore}`);
+  if (room.settings.jokerReveal === 'shuffle') U.sys(room, `📜 섞이기 전의 원래 직업: ${room.jokerBefore}`);
   for (const p of list) { if (p.role === 'follower') U.assignMaster(room, p); } // 섞인 신봉자는 새 주인을 받는다
   for (const p of list) {
     U.priv(room, p, `🎭 새 직업: ${U.roleName(p.role)} — ${ROLE[p.role].desc}`);

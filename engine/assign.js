@@ -2,7 +2,7 @@
 // 직업 배정
 //  - 직업마다 "최소~최대 인원"을 정할 수 있다. (⭐ 필수 = 최소 1명 이상)
 //  - 마피아·시민도 다른 직업처럼 넣기/빼기가 가능하다.
-//  - 마피아 팀 인원 = 참가 인원 ÷ 4 (최소 1명). 중립 팀은 팀 최대 인원까지 채운다.
+//  - 마피아 팀 인원 = 방장이 정한 인원(0이면 참가 인원 ÷ 4, 최소 1명). 중립 팀은 팀 최대 인원까지 채운다.
 const { ROLES, roleCap } = require('../roles');
 const U = require('./util');
 
@@ -68,9 +68,11 @@ function assignRoles(room) {
 
   // ---------------- 마피아 팀
   const mafiaKeys = keysOf('mafia');
-  let M = Math.max(1, Math.floor(n / 4));
+  const sizeSet = Math.max(0, s.mafiaSize | 0); // 0 = 자동(인원 ÷ 4), 그 외 = 마피아 팀 총 인원
+  let M = sizeSet > 0 ? sizeSet : Math.max(1, Math.floor(n / 4));
   const minMafia = mafiaKeys.reduce((a, k) => a + rng(k)[0] * SIZE(k), 0);
   const maxM = Math.max(1, Math.ceil(n / 2) - 1); // 시작하자마자 마피아 팀이 이기지 않도록
+  if (sizeSet > 0 && minMafia > sizeSet) notes.push(`⚠ 마피아 팀 인원(${sizeSet}명)보다 직업별 최소 인원 합(${minMafia}명)이 커서 최소 인원을 우선했어요.`);
   M = Math.min(Math.max(M, minMafia), maxM);
   const capMafia = mafiaKeys.reduce((a, k) => a + rng(k)[1] * SIZE(k), 0);
   let forcePlainMafia = false;
@@ -79,7 +81,9 @@ function assignRoles(room) {
   let mafiaUsed;
   if (forcePlainMafia) { counts.mafia = M; mafiaUsed = M; }
   else {
-    mafiaUsed = fillTeam('mafia', M, 'mafia', Math.max(0, s.mafiaSpecialMax));
+    // 인원을 직접 정했다면 일반 마피아 최소 인원을 뺀 나머지 자리는 팀 직업이 채운다. 자동이면 특수 직업은 최대 2명(기본)까지.
+    const specialCap = sizeSet > 0 ? M : Math.max(0, s.mafiaSpecialMax == null ? 2 : s.mafiaSpecialMax);
+    mafiaUsed = fillTeam('mafia', M, 'mafia', specialCap);
     if (mafiaUsed < 1) { counts.mafia = 1; mafiaUsed = 1; notes.push('⚠ 마피아 팀에 넣을 수 있는 직업이 부족해 일반 마피아 1명을 넣었어요.'); }
   }
   M = mafiaUsed;
