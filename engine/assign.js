@@ -129,7 +129,7 @@ function assignRoles(room) {
   while (list.length < n) list.push('citizen');
   const roles = U.shuffle(list).slice(0, n);
   U.shuffle(room.players).forEach((p, i) => {
-    p.role = roles[i]; p.alive = true; p.s = {}; p.team = null; p.destroyed = false; p.exorcised = false; p.blessed = false; p.blessedBy = null; p.loaning = false; p.origRole = roles[i]; p.guess = null;
+    p.role = roles[i]; p.alive = true; p.s = {}; p.team = null; p.destroyed = false; p.exorcised = false; p.blessed = false; p.blessedBy = null; p.loaning = false; p.origRole = roles[i]; p.guess = null; p.snap = null;
     p.contacted = p.role === 'mafia';
   });
   room.touches = []; room.voteActs = {}; room.pendingWin = null;

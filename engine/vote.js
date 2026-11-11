@@ -174,10 +174,11 @@ function checkWin(room) {
 function prophetCheck(room, w) {
   const won = [];
   for (const p of room.players) {
-    if (p.origRole !== 'prophet' || !p.guess) continue;
-    const others = room.players.filter((x) => x !== p);
+    const borne = p.role === 'prophet' && p.snap; // 광대로 중간에 예언가가 된 경우: 그때 살아 있던 사람들의 그때 직업 기준
+    if ((p.origRole !== 'prophet' && !borne) || !p.guess) continue;
+    const others = borne ? room.players.filter((x) => x !== p && p.snap.roles[x.id]) : room.players.filter((x) => x !== p);
     if (!others.length) continue;
-    const right = others.filter((x) => p.guess[x.id] === x.origRole).length;
+    const right = others.filter((x) => p.guess[x.id] === (borne ? p.snap.roles[x.id] : x.origRole)).length;
     if (right * 2 >= others.length) won.push({ p, right, total: others.length });
   }
   if (!won.length) return w;

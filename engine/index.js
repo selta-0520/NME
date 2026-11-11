@@ -45,8 +45,12 @@ function meView(room, p) {
   if (v) me.voteAbility = v;
   const bm = AB.boomOptions(room, p);
   if (bm) me.boom = bm;
-  if (p.origRole === 'prophet' && room.phase !== 'ended') {
-    me.predict = { open: room.phase === 'night' && room.day === 1, ids: room.players.filter((x) => x !== p).map((x) => x.id), guesses: p.guess || {} };
+  if ((p.origRole === 'prophet' || (p.role === 'prophet' && p.snap)) && room.phase !== 'ended') {
+    if (p.role === 'prophet' && p.snap) { // 광대 덕분에 중간에 예언가가 된 경우: 그날 낮 동안 입력할 수 있고, 그때의 직업 기준으로 판정
+      me.predict = { open: p.alive && room.phase === 'day' && p.snap.day === room.day, borne: true, ids: Object.keys(p.snap.roles), guesses: p.guess || {} };
+    } else {
+      me.predict = { open: room.phase === 'night' && room.day === 1, ids: room.players.filter((x) => x !== p).map((x) => x.id), guesses: p.guess || {} };
+    }
   }
   if (room.phase === 'night' && room.night && p.alive && U.canAttackAsMafia(room, p)) {
     me.mafiaPicks = {};

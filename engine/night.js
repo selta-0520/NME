@@ -34,7 +34,7 @@ function copyRoleNote(room, p, role) {
 }
 
 // 다시 나눠 줄 때 뽑을 수 있는 직업 (광대·짝이 필요한 직업·게임 시작 때만 의미 있는 직업은 제외)
-const REROLL_SKIP = new Set(['joker', 'rich', 'prophet']); // 거지는 부자와 함께(2자리), 커플도 2자리로 뽑는다
+const REROLL_SKIP = new Set(['joker', 'rich']); // 거지는 부자와 함께(2자리), 커플도 2자리로 뽑는다
 function rerollRoles(room, list, joker, newRole) {
   const s = room.settings, enabled = new Set(s.enabledRoles || []);
   const teamOfRole = (k) => ROLE[k].team;
@@ -84,13 +84,17 @@ function jokerShuffle(room, joker) {
     const pool = U.shuffle(list.map((p) => (p === joker ? newRole : p.role)));
     list.forEach((p, i) => { U.setRole(room, p, pool[i], true); });
   }
-  for (const p of room.players) { p.s.known = {}; }
+  for (const p of room.players) { p.s.known = {}; p.snap = null; }
+  for (const p of list) { // 광대로 새 예언가가 된 사람은 오늘 낮 동안 예언할 수 있다 (그 시점의 직업 기준으로 판정)
+    if (p.role === 'prophet' && p.origRole !== 'prophet') { p.guess = null; p.snap = { day: room.day, roles: Object.fromEntries(list.filter((x) => x !== p).map((x) => [x.id, x.role])) }; }
+  }
   U.sys(room, room.settings.jokerMode === 'reroll' ? '🃏 광대의 장난으로 살아있는 모든 사람의 직업이 새로 배정되었습니다! 자신의 직업을 다시 확인하세요.' : '🃏 광대의 장난으로 살아있는 모든 사람의 직업이 뒤섞였습니다! 자신의 직업을 다시 확인하세요.');
   room.jokerBefore = before.join(', '); // 게임이 끝난 뒤 공개용으로 보관
   if (room.settings.jokerReveal === 'shuffle') U.sys(room, `📜 섞이기 전의 원래 직업: ${room.jokerBefore}`);
   for (const p of list) { if (p.role === 'follower') U.assignMaster(room, p); } // 섞인 신봉자는 새 주인을 받는다
   for (const p of list) {
     U.priv(room, p, `🎭 새 직업: ${U.roleName(p.role)} — ${ROLE[p.role].desc}`);
+    if (p.role === 'prophet' && p.snap) U.priv(room, p, '🔮 광대 덕분에 예언가가 되었어요! 오늘 낮이 끝나기 전에 살아 있는 사람들의 직업을 예언하세요. 지금 직업을 기준으로 게임이 끝났을 때 절반 이상 맞으면 우승해요.');
     if (U.inMafiaChat(p)) {
       const mates = list.filter((x) => x !== p && U.inMafiaChat(x));
       U.priv(room, p, `🔪 마피아 팀: ${U.names(mates) || '(없음)'}`);

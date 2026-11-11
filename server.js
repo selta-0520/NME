@@ -532,11 +532,13 @@ function handleAction(room, p, b) {
       return;
     }
     case 'predict': { // 예언가: 첫날 밤 안에 모든 사람의 직업을 예언
-      if (p.origRole !== 'prophet') fail('예언가만 예언할 수 있어요.');
-      if (!(room.phase === 'night' && room.day === 1)) fail('예언은 첫날 밤에만 입력할 수 있어요.');
+      const borne = p.role === 'prophet' && p.snap; // 광대 덕분에 예언가가 된 경우
+      if (!borne && p.origRole !== 'prophet') fail('예언가만 예언할 수 있어요.');
+      if (borne) { if (!(p.alive && room.phase === 'day' && p.snap.day === room.day)) fail('예언은 예언가가 된 날의 낮 동안에만 입력할 수 있어요.'); }
+      else if (!(room.phase === 'night' && room.day === 1)) fail('예언은 첫날 밤에만 입력할 수 있어요.');
       const g = {};
       for (const [id, k] of Object.entries(b.guesses && typeof b.guesses === 'object' ? b.guesses : {})) {
-        if (id !== p.id && byId(room, id) && ROLE[k]) g[id] = k;
+        if (id !== p.id && byId(room, id) && ROLE[k] && (!borne || p.snap.roles[id])) g[id] = k;
       }
       p.guess = g;
       broadcastState(room);

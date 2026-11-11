@@ -588,6 +588,7 @@ function predictPanel() {
     for (const id of pr.ids) { const q = pById(id); const k = pr.guesses[id]; box.append(h('div', { class: 'note' }, `${q ? q.name : '?'} → ${k && ROLE[k] ? ROLE[k].name : '(입력 안 함)'}`)); }
     return box;
   }
+  if (pr.borne) box.append(h('div', { class: 'note' }, '광대 덕분에 예언가가 되었어요. 오늘 낮이 끝나기 전에 입력하세요. 지금 직업을 기준으로 판정해요.'));
   box.append(h('div', { class: 'note' }, '게임이 끝났을 때 절반 이상이 처음 배정된 직업과 맞으면 모든 승리가 취소되고 예언가가 우승해요. 첫날 밤 안에 저장하세요.'));
   for (const id of pr.ids) {
     const q = pById(id); if (!q) continue;
