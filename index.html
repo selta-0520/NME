@@ -296,10 +296,14 @@ const Music = (() => {
     last:  { root: 130.81, scale: [0, 1, 3, 6, 7], bpm: 140, lead: 'sawtooth', dens: 0.6, oct: [0, 1], pad: [0, 3, 6], bass: true },
     ended: { root: 261.63, scale: [0, 4, 7, 11, 14], bpm: 64, lead: 'sine', dens: 0.4, oct: [0, 1], pad: [0, 7, 12, 16], bass: false },
   };
-  const LEVELS = [0, 0.12, 0.25, 0.45];
-  const NAMES = ['🔇 음악 끔', '🎵 음악 작게', '🎵 음악 보통', '🎵 음악 크게'];
-  let ctx = null, master = null, filt = null, level = 0, scene = 'lobby', timer = null, next = 0, step = 0;
-  try { const v = parseInt(localStorage.getItem('nme_music'), 10); if (v >= 0 && v <= 3) level = v; } catch (e) { /* 저장소 없음 */ }
+  // 볼륨은 0~100(%). 100%는 예전 '크게'보다 훨씬 크게 (소리가 겹쳐 깨지지 않도록 압축기를 거쳐요)
+  const gainOf = (v) => 1.8 * Math.pow(v / 100, 1.6);
+  let ctx = null, master = null, filt = null, vol = 60, on = false, scene = 'lobby', timer = null, next = 0, step = 0;
+  try {
+    const v = parseInt(localStorage.getItem('nme_music_vol'), 10); if (v >= 0 && v <= 100) vol = v;
+    // (브라우저 규칙상 소리는 버튼을 눌러야 시작돼요. 그래서 켜짐 상태는 기억하지 않고 볼륨만 기억해요)
+  } catch (e) { /* 저장소 없음 */ }
+  const save = () => { try { localStorage.setItem('nme_music_vol', String(vol)); } catch (e) { /* 저장소 없음 */ } };
   const sceneOf = (phase) => (phase === 'ended' ? 'ended' : SCENES[phase] ? phase : 'lobby');
   const freq = (sc, deg, oct) => sc.root * Math.pow(2, (sc.scale[deg % sc.scale.length] + 12 * (oct + Math.floor(deg / sc.scale.length))) / 12);
   function tone(f, t, dur, type, vol, atk, rel) {
@@ -321,7 +325,7 @@ const Music = (() => {
     step++;
   }
   function tick() {
-    if (!ctx || level === 0) return;
+    if (!ctx || !on) return;
     const beat = 60 / SCENES[scene].bpm / 2;
     while (next < ctx.currentTime + 0.5) { play(next); next += beat; }
   }
@@ -329,10 +333,11 @@ const Music = (() => {
     if (!ctx) {
       const AC = window.AudioContext || window.webkitAudioContext; if (!AC) return false;
       ctx = new AC(); master = ctx.createGain(); filt = ctx.createBiquadFilter();
-      filt.type = 'lowpass'; filt.frequency.value = 2600; filt.connect(master); master.connect(ctx.destination);
+      filt.type = 'lowpass'; filt.frequency.value = 3200; filt.connect(master);
+      const comp = ctx.createDynamicsCompressor(); master.connect(comp); comp.connect(ctx.destination);
     }
     if (ctx.state === 'suspended') ctx.resume();
-    master.gain.setTargetAtTime(LEVELS[level], ctx.currentTime, 0.2);
+    master.gain.setTargetAtTime(gainOf(vol), ctx.currentTime, 0.1);
     if (!timer) { next = ctx.currentTime + 0.1; step = 0; timer = setInterval(tick, 120); }
     return true;
   }
@@ -341,17 +346,25 @@ const Music = (() => {
     if (timer) { clearInterval(timer); timer = null; }
   }
   return {
-    label: () => NAMES[level],
-    cycle() { // 끔 → 작게 → 보통 → 크게 → 끔
-      level = (level + 1) % LEVELS.length;
-      try { localStorage.setItem('nme_music', String(level)); } catch (e) { /* 저장소 없음 */ }
-      if (level === 0) stop(); else if (!start()) level = 0;
+    get vol() { return vol; },
+    get on() { return on; },
+    label: () => (!on || vol === 0 ? '🔇 음악' : (vol < 35 ? '🔈 ' : vol < 70 ? '🔉 ' : '🔊 ') + vol + '%'),
+    toggle() { // 켜기/끄기 (끌 때도 볼륨은 기억)
+      if (on) { on = false; stop(); } else { if (vol === 0) vol = 60; on = true; if (!start()) on = false; }
+      save();
+    },
+    setVol(v) { // 0~100 → 0이면 음소거, 올리면 자동으로 켜짐
+      vol = Math.max(0, Math.min(100, Math.round(v)));
+      if (vol === 0) { if (on) { on = false; stop(); } }
+      else if (!on) { on = true; if (!start()) on = false; }
+      else if (master) master.gain.setTargetAtTime(gainOf(vol), ctx.currentTime, 0.05);
+      save();
     },
     setScene(phase) {
       const n = sceneOf(phase);
       if (n !== scene) { scene = n; step = 0; if (ctx) next = ctx.currentTime + 0.1; }
     },
-    pauseHidden(hidden) { if (!ctx || level === 0) return; if (hidden) ctx.suspend(); else ctx.resume(); },
+    pauseHidden(hidden) { if (!ctx || !on) return; if (hidden) ctx.suspend(); else ctx.resume(); },
   };
 })();
 if (document.addEventListener) document.addEventListener('visibilitychange', () => Music.pauseHidden(document.hidden));
@@ -386,7 +399,29 @@ function renderTop() {
   if (st.phase === 'lobby') top.append(h('div', { class: 'timer', style: 'letter-spacing:3px' }, st.code));
   else if (st.endsAt) top.append(h('div', { class: 'timer', id: 'timer' }, fmt(remaining())));
   top.append(h('button', { class: 'hbtn', onclick: openGuide }, '📖 설명서'));
-  top.append(h('button', { class: 'hbtn', onclick: () => { Music.cycle(); renderTop(); } }, Music.label()));
+  top.append(h('button', { class: 'hbtn', onclick: toggleMusicPop }, Music.label()));
+}
+
+// 음악 볼륨 패널 (유튜브처럼 스피커 버튼 + 슬라이더 + 퍼센트). 화면이 다시 그려져도 사라지지 않게 따로 만들어 둬요
+function toggleMusicPop() {
+  let pop = document.getElementById('musicpop');
+  if (pop) { pop.remove(); return; }
+  const pct = h('span', { class: 'pct' }, '');
+  const mute = h('button', { class: 'ghost', style: 'padding:6px 10px', title: '켜기/끄기' }, '');
+  const range = h('input', { type: 'range', min: 0, max: 100, step: 1, style: 'flex:1;min-width:120px' });
+  const sync = () => {
+    range.value = Music.on ? Music.vol : 0;
+    pct.textContent = (Music.on ? Music.vol : 0) + '%';
+    mute.textContent = !Music.on ? '🔇' : Music.vol < 35 ? '🔈' : Music.vol < 70 ? '🔉' : '🔊';
+    renderTop2();
+  };
+  const renderTop2 = () => { const b = document.querySelector('#top .hbtn:last-child'); if (b) b.textContent = Music.label(); };
+  range.oninput = () => { Music.setVol(+range.value); sync(); };
+  mute.onclick = () => { Music.toggle(); sync(); };
+  pop = h('div', { id: 'musicpop', style: 'position:fixed;top:54px;right:8px;z-index:50;background:var(--panel2);border:1px solid var(--line);border-radius:12px;padding:10px 12px;display:flex;align-items:center;gap:10px;box-shadow:0 6px 24px rgba(0,0,0,.4);max-width:calc(100vw - 16px)' },
+    mute, range, pct, h('button', { class: 'ghost', style: 'padding:6px 10px', onclick: () => pop.remove() }, '✕'));
+  document.body.append(pop);
+  sync();
 }
 
 let uiMode = 'vote', lastPhaseKey = '', progDraft = null;
