@@ -35,6 +35,7 @@ function resolveVote(room) {
     else if (T.role === 'beggar' && !T.s.met) U.sys(room, `🙏 거지 ${T.name}님은 투표로 죽지 않습니다!`);
     else if (T.role === 'madman' && !T.s.shieldUsed) { T.s.shieldUsed = true; U.sys(room, `🌀 ${T.name}님은 처형 투표에서 살아남았습니다!`); }
     else if (T.role === 'fugitive' && !T.s.escaped) { T.s.escaped = true; U.sys(room, `🏃 ${T.name}님이 처형을 피해 도망쳤습니다! (이제 투표할 수 없습니다)`); }
+    else if (U.survive(room, T)) U.sys(room, `🍀 ${T.name}님은 처형에서 살아남았습니다!`);
     else {
       U.io.kill(room, T, '투표로 처형되었습니다.');
       if (T.role === 'terrorist') { room.lastBoom = T.id; room.lastPick = null; } // 서버가 '마지막 선택' 시간을 열어 준다
@@ -94,6 +95,7 @@ function resolveBoom(room, targetId) {
   room.lastBoom = null; room.lastPick = null;
   const victim = targetId ? U.byId(room, targetId) : null;
   if (!T || !victim || !victim.alive || victim === T) { U.sys(room, '💣 테러리스트는 아무도 데려가지 않았습니다.'); return; }
+  if (U.survive(room, victim)) { U.sys(room, `💣 테러리스트의 자폭에서 ${victim.name}님이 살아남았습니다!`); return; }
   U.io.kill(room, victim, '테러리스트의 자폭에 휘말려 사망했습니다.');
 }
 
@@ -105,16 +107,30 @@ function checkWin(room) {
   const C = alive.filter((p) => U.teamOf(p) === 'citizen').length;
   const N = alive.filter((p) => U.teamOf(p) === 'neutral');
   const ids = (t) => room.players.filter((p) => U.teamOf(p) === t).map((p) => p.id);
-  if (M > 0 && M >= alive.length - M) return { kind: 'mafia', text: '🔪 마피아 팀이 승리했습니다!', ids: ids('mafia') };
-  // 짝(부자/거지)이 죽어서 더는 이길 수 없는 거지·부자는 시민 승리를 막지 않는다
+  // 신봉자: 주인이 살아있고 주인의 팀이 이기면 함께 우승
+  const followersOf = (team) => alive.filter((p) => {
+    if (p.role !== 'follower' || !p.s.master) return false;
+    const m = U.byId(room, p.s.master);
+    return m && m.alive && U.teamOf(m) === team;
+  }).map((p) => p.id);
+  const fText = (team, base) => { const f = followersOf(team); return f.length ? `${base} (신봉자 ${U.names(f.map((i) => U.byId(room, i)))}님도 함께 우승!)` : base; };
+  // 생존자·도둑: 마피아 팀 또는 시민 팀이 전멸했을 때 살아있으면 우승
+  const SS = alive.filter((p) => p.role === 'survivor' || p.role === 'thief');
+  if (SS.length && (M === 0 || C === 0)) {
+    return { kind: 'neutral', text: `🍀 ${M === 0 ? '마피아' : '시민'} 팀이 전멸했습니다! ${SS.map((p) => `${U.roleName(p.role)} ${p.name}님`).join(', ')}이(가) 끝까지 살아남아 우승했습니다!`, ids: SS.map((p) => p.id) };
+  }
+  if (M > 0 && M >= alive.length - M) return { kind: 'mafia', text: fText('mafia', '🔪 마피아 팀이 승리했습니다!'), ids: ids('mafia').concat(followersOf('mafia')) };
+  // 짝(부자/거지)이 죽어서 더는 이길 수 없는 거지·부자, 혼자서는 이길 수 없는 신봉자는 시민 승리를 막지 않는다
   const hasRole = (r) => alive.some((p) => p.role === r);
-  const threat = N.filter((p) => !((p.role === 'beggar' && !hasRole('rich')) || (p.role === 'rich' && !hasRole('beggar'))));
-  if (M === 0 && threat.length === 0 && C > 0) return { kind: 'citizen', text: '🎉 시민 팀이 승리했습니다!', ids: ids('citizen') };
+  const threat = N.filter((p) => p.role !== 'follower' && !((p.role === 'beggar' && !hasRole('rich')) || (p.role === 'rich' && !hasRole('beggar'))));
+  if (M === 0 && threat.length === 0 && C > 0) return { kind: 'citizen', text: fText('citizen', '🎉 시민 팀이 승리했습니다!'), ids: ids('citizen').concat(followersOf('citizen')) };
   if (alive.length === 1 && N.length === 1) {
+    if (N[0].role === 'follower') return { kind: 'draw', text: '🤝 신봉자만 남아 승부가 나지 않아 무승부입니다.', ids: [] };
     return { kind: 'neutral', text: `🌀 중립 팀 ${N[0].name}님(${U.roleName(N[0].role)})이 끝까지 살아남아 우승했습니다!`, ids: [N[0].id] };
   }
   // 중립만 2명 이상 남았는데 아무도 죽일 수 없으면 무승부
-  if (M === 0 && C === 0 && N.length > 1 && !N.some((p) => p.role === 'madman' || p.role === 'destroyer')) {
+  const killer = (p) => p.role === 'madman' || (p.role === 'destroyer' && (p.s.destroyUsed || 0) < U.destroyLimit(room));
+  if (M === 0 && C === 0 && N.length > 1 && !N.some(killer)) {
     return { kind: 'draw', text: '🤝 승부가 나지 않아 무승부입니다.', ids: [] };
   }
   return null;

@@ -35,7 +35,19 @@ function nightOptions(room, p, modeOverride) {
     case 'ninja': return o('🥷 상호작용을 바꿀 사람', others);
     case 'detective': return o('🕵 비교할 첫 번째 사람 (밤)', A);
     case 'bodyguard': return o('🛡 지킬 사람', others);
-    case 'destroyer': return o('💥 파괴할 사람', others);
+    case 'destroyer': {
+      const left = U.destroyLimit(room) - (p.s.destroyUsed || 0);
+      return left > 0 ? o(`💥 파괴할 사람 (남은 횟수 ${left}번)`, others) : null;
+    }
+    case 'gambler': return o('🎰 오늘 밤 죽을 것 같은 사람', others);
+    case 'thief': {
+      if (p.s.loan && !p.loaning) {
+        const opt = U.withLoan(p, () => nightOptions(room, p, modeOverride));
+        if (opt) opt.label = `🧤 훔친 능력(${ROLE[p.s.loan].name}, 1회) — ${opt.label}`;
+        return opt;
+      }
+      return o('🧤 능력을 훔칠 사람 (한 번 고른 사람은 다시 못 골라요)', others.filter((x) => !(p.s.stolenIds || []).includes(x.id)));
+    }
     case 'rich': return o('💰 거지인지 확인할 사람', others);
     case 'ghost': return o('👻 겁줄 사람', others.filter((x) => !(p.s.lastScare && p.s.lastScare.day === room.day - 1 && p.s.lastScare.id === x.id)));
     case 'assassin': return p.contacted ? o('🗡 죽일 사람 (상대의 능력을 무시)', others.filter((x) => !U.inMafiaChat(x))) : null;
@@ -50,12 +62,7 @@ function nightOptions(room, p, modeOverride) {
       const mode = (modeOverride || a.mode) === 'on' ? 'on' : 'off';
       return o('🎲 오늘 밤 능력을 쓸까요?', [], { modes, mode, noTarget: true });
     }
-    case 'angel': {
-      if (p.s.angelUsed) return null;
-      const modes = [{ key: 'save', label: '소생 (산 사람)' }, { key: 'revive', label: '부활 (죽은 사람)' }];
-      let mode = modeOverride || a.mode; if (mode !== 'revive') mode = 'save';
-      return o('😇 능력을 쓸 사람 (1회)', mode === 'save' ? A : dead.filter((x) => !x.destroyed), { modes, mode });
-    }
+    case 'angel': return p.s.angelUsed ? null : o('✨ 성스러운 가호를 내릴 사람 (1회, 자신 포함)', A);
     default: return null;
   }
 }
@@ -164,7 +171,22 @@ function infoLines(room, p) {
     case 'scientist': L.push(p.s.potionUsed ? `⚗ ${p.s.potionUsed === 'heal' ? '살리는' : '죽이는'} 물약을 사용했어요. (더 쓸 수 없어요)` : '⚗ 물약을 1번 쓸 수 있어요. (살리기 또는 죽이기 중 하나)'); break;
     case 'reporter': L.push(p.s.reportUsed ? '📰 속보 사용 완료' : '📰 속보를 1번 낼 수 있어요.'); break;
     case 'priest': L.push(p.s.priestUsed ? '⛪ 부활 사용 완료' : '⛪ 부활을 1번 쓸 수 있어요.'); break;
-    case 'angel': L.push(p.s.angelUsed ? '😇 능력 사용 완료' : '😇 능력을 1번 쓸 수 있어요.'); break;
+    case 'angel': {
+      if (!p.s.angelUsed) { L.push('✨ 성스러운 가호를 1번 내릴 수 있어요.'); break; }
+      const t = p.s.blessT ? U.byId(room, p.s.blessT) : null;
+      L.push(t ? `✨ 가호를 내린 사람: ${t.name} ${t.blessed ? '(가호 아직 남음)' : '(가호가 이미 발동했어요)'}` : '✨ 가호 사용 완료'); break;
+    }
+    case 'destroyer': { const lim = U.destroyLimit(room), used = p.s.destroyUsed || 0; L.push(`💥 파괴 ${used}/${lim}번 사용${used >= lim ? ' (더는 파괴할 수 없어요)' : ''}`); break; }
+    case 'gambler': L.push(`🎰 적중 ${p.s.hits || 0}/${room.settings.gamblerHits}번 — 매일 밤 죽을 사람을 예측하세요.`); break;
+    case 'follower': { const m = p.s.master ? U.byId(room, p.s.master) : null; L.push(m ? `🙇 주인: ${m.name}${m.alive ? '' : ' (사망 — 이제 우승할 수 없어요)'}` : '🙇 주인이 없어요.'); break; }
+    case 'survivor': L.push(`🍀 남은 목숨 ${Math.max(0, 2 - (p.s.surv || 0))}번 — 마피아 팀 또는 시민 팀이 전멸할 때 살아있으면 우승!`); break;
+    case 'thief': {
+      if (p.s.loan) L.push(`🧤 훔친 능력: ${ROLE[p.s.loan].name} (다음 밤에 딱 1번 쓸 수 있어요)`);
+      else L.push('🧤 밤에 1명의 능력을 훔치세요. 마피아 팀 또는 시민 팀이 전멸할 때 살아있으면 우승!');
+      const ids = (p.s.stolenIds || []).map((i) => U.byId(room, i)).filter(Boolean);
+      if (ids.length) L.push(`🧤 이미 고른 사람: ${U.names(ids)}`);
+      break;
+    }
     case 'soldier': L.push(p.s.shieldUsed ? '🛡 방어는 이미 사용했어요.' : '🛡 마피아의 공격을 1번 버텨요.'); break;
     case 'fugitive': L.push(p.s.escaped ? '🏃 도망쳤어요. 이제 투표할 수 없어요.' : '🏃 처형을 1번 피할 수 있어요.'); break;
     case 'madman': L.push(p.s.shieldUsed ? '🌀 처형 방어 사용 완료' : '🌀 처형 투표를 1번 견뎌요.'); break;

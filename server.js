@@ -28,6 +28,7 @@ const LIMITS = {
   mafiaSpecialMax: [0, 10],
   citizenSpecialMax: [0, 40],
   neutralMax: [0, 10],
+  gamblerHits: [1, 10],
 };
 
 const rooms = new Map();
@@ -54,6 +55,7 @@ function defaultSettings() {
     mafiaSpecialMax: 2,
     citizenSpecialMax: 12,
     neutralMax: 2,
+    gamblerHits: 3,
     revealOnDeath: false,
     jokerReveal: false,
     botLevel: 'normal',
@@ -275,6 +277,7 @@ function startGame(room) {
       const mates = room.players.filter((x) => x !== p && U.inMafiaChat(x));
       U.priv(room, p, `🔪 마피아 팀: ${U.names(mates) || '(없음)'}`);
     }
+    if (p.role === 'follower') U.masterNote(room, p);
     if (p.role === 'couple') {
       const m = room.players.find((x) => x !== p && x.role === 'couple');
       if (m) U.priv(room, p, `💕 당신의 커플은 ${m.name}님입니다.`);
@@ -353,7 +356,7 @@ function resetToLobby(room) {
   room.phase = 'lobby'; room.day = 0; room.winner = null; room.night = null; room.votes = {}; room.voteActs = {};
   room.touches = []; room.pendingWin = null; room.endsAt = 0; room.chat = []; room.seq++;
   for (const p of room.players) {
-    p.role = null; p.alive = true; p.s = {}; p.team = null; p.contacted = false; p.destroyed = false; p.exorcised = false;
+    p.role = null; p.alive = true; p.s = {}; p.team = null; p.contacted = false; p.destroyed = false; p.exorcised = false; p.blessed = false; p.blessedBy = null; p.loaning = false;
   }
   room.players = room.players.filter((p) => p.bot || p.conns.size > 0); // 접속이 끊긴 사람은 정리(봇은 유지)
   if (!byId(room, room.hostId)) { const h = room.players.find((x) => !x.bot); if (h) room.hostId = h.id; }

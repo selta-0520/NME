@@ -596,6 +596,8 @@ function buildSettings() {
     numField('mafiaSpecialMax', '마피아 팀', '명'),
     numField('citizenSpecialMax', '시민 팀', '명'),
     numField('neutralMax', '중립 팀', '명'),
+    h('h3', null, '🎰 도박사'),
+    numField('gamblerHits', '우승에 필요한 적중 횟수', '번'),
     h('h3', null, '기타'),
     h('label', { class: 'field' }, h('span', null, '자기 자신에게 투표 허용'),
       h('input', { type: 'checkbox', 'data-key': 'selfVote', style: 'width:20px;height:20px', onchange: (e) => sendPatch({ selfVote: e.target.checked }) })),

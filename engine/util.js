@@ -63,7 +63,7 @@ U.setRole = (room, p, role, quiet) => {
 
 // 접선 (마피아 팀 특수 직업 ↔ 마피아)
 U.contact = (room, p, mafiaTarget) => {
-  if (p.contacted) return;
+  if (p.contacted || p.loaning) return; // (도둑이 훔친 능력으로는 접선하지 않는다)
   p.contacted = true;
   const mates = room.players.filter((x) => x !== p && x.alive && U.inMafiaChat(x));
   if (p.role === 'informant') {
@@ -75,12 +75,45 @@ U.contact = (room, p, mafiaTarget) => {
   for (const m of mates) U.priv(room, m, `🤝 ${U.roleName(p.role)} ${p.name}님이 접선했습니다!`);
 };
 
+// 생존자: 죽을 위기를 2번까지 넘긴다. 넘겼으면 true
+U.survive = (room, p) => {
+  if (!p || p.role !== 'survivor') return false;
+  const used = p.s.surv || 0;
+  if (used >= 2) return false;
+  p.s.surv = used + 1;
+  U.priv(room, p, `🍀 죽을 뻔했지만 살아남았습니다! (남은 목숨 ${2 - p.s.surv}번)`);
+  return true;
+};
+
+// 파괴자가 한 판에 쓸 수 있는 횟수: 게임 시작 인원의 3분의 1 (내림, 최소 1번)
+U.destroyLimit = (room) => Math.max(1, Math.floor((room.startN || room.players.length) / 3));
+
+// 도둑: 훔친 능력으로 잠시 바꿔서 실행한다 (역할·상태를 임시로 바꿨다가 되돌림)
+U.withLoan = (p, fn) => {
+  const r = p.role, s = p.s;
+  p.role = s.loan; p.s = s.lnS || (s.lnS = {}); p.loaning = true;
+  try { return fn(); } finally { p.role = r; p.s = s; p.loaning = false; }
+};
+
+// 신봉자의 주인 정하기 (시민·마피아 팀 중 랜덤). quiet 이면 알림을 보내지 않는다
+U.masterNote = (room, f) => {
+  const m = f.s.master ? U.byId(room, f.s.master) : null;
+  if (m) U.priv(room, f, `🙇 당신의 주인은 ${m.name}님입니다. (${U.teamOf(m) === 'mafia' ? '마피아' : '시민'} 팀) 주인이 끝까지 살아남고 그 팀이 이기면 함께 우승해요.`);
+};
+U.assignMaster = (room, f, quiet) => {
+  const c = room.players.filter((x) => x !== f && x.role !== 'follower' && U.teamOf(x) !== 'neutral');
+  const m = c.length ? U.pick(c) : null;
+  f.s.master = m ? m.id : null;
+  if (!quiet) U.masterNote(room, f);
+  return m;
+};
+
 // 능력을 쓴 사람이 대상에게 "상호작용" 했다는 기록 (지원자·혁명가가 사용)
 U.touch = (room, actor, target) => {
   if (!actor || !target || actor === target) return;
   room.touches.push({ from: actor.id, to: target.id });
   if (target.role === 'revolutionary' && target.alive && !target.s.joined) {
-    const t = U.teamOf(actor);
+    const t = actor.loaning ? 'neutral' : U.teamOf(actor); // (도둑이 훔친 능력은 팀을 바꾸지 않는다)
     if (t === 'mafia' || t === 'citizen') {
       target.s.joined = true; target.team = t;
       U.priv(room, target, `✊ 누군가의 능력을 받아 ${t === 'mafia' ? '마피아' : '시민'} 팀이 되었습니다! 이제 그 팀의 승리가 당신의 승리입니다.`);

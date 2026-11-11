@@ -121,10 +121,12 @@ function assignRoles(room) {
   while (list.length < n) list.push('citizen');
   const roles = U.shuffle(list).slice(0, n);
   U.shuffle(room.players).forEach((p, i) => {
-    p.role = roles[i]; p.alive = true; p.s = {}; p.team = null; p.destroyed = false; p.exorcised = false;
+    p.role = roles[i]; p.alive = true; p.s = {}; p.team = null; p.destroyed = false; p.exorcised = false; p.blessed = false; p.blessedBy = null; p.loaning = false;
     p.contacted = p.role === 'mafia';
   });
   room.touches = []; room.voteActs = {}; room.pendingWin = null;
+  room.startN = n;
+  for (const p of room.players) if (p.role === 'follower') U.assignMaster(room, p, true); // 신봉자의 주인 (알림은 게임 시작 때)
   room.assignNotes = notes;
   return [...new Set(skipped)];
 }

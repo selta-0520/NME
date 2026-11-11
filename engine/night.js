@@ -1,6 +1,6 @@
 'use strict';
 // 밤 시작 / 밤 결과 처리
-const { ROLE } = require('../roles');
+const { ROLE, LOANABLE } = require('../roles');
 const U = require('./util');
 const AB = require('./abilities');
 
@@ -42,6 +42,7 @@ function jokerShuffle(room, joker) {
   for (const p of room.players) { p.s.known = {}; }
   U.sys(room, '🃏 광대의 장난으로 살아있는 모든 사람의 직업이 뒤섞였습니다! 자신의 직업을 다시 확인하세요.');
   if (room.settings.jokerReveal) U.sys(room, `📜 섞이기 전의 원래 직업: ${before.join(', ')}`);
+  for (const p of list) { if (p.role === 'follower') U.assignMaster(room, p); } // 섞인 신봉자는 새 주인을 받는다
   for (const p of list) {
     U.priv(room, p, `🎭 새 직업: ${U.roleName(p.role)} — ${ROLE[p.role].desc}`);
     if (U.inMafiaChat(p)) {
@@ -65,6 +66,17 @@ function resolveNight(room) {
   const guard = {};          // 보호받는 사람 id -> 경호원
   const nightDeadIds = new Set();
   const guardNotes = [];     // 경호원이 지키던 사람이 공격받아 죽은 기록
+
+  // ---- 0. 훔친 능력을 쓰는 도둑은 이번 밤 동안 그 직업으로 처리한다 (끝나면 되돌림)
+  const swapped = [];
+  for (const p of U.alive(room)) {
+    if (p.role !== 'thief' || !p.s.loan || p.loaning) continue;
+    const a = acts[p.id];
+    if (!a || (!a.target && a.mode !== 'on')) continue;
+    if (!AB.nightOptions(room, p, a.mode)) continue; // 유혹당함 등
+    swapped.push({ p, role: p.role, s: p.s });
+    p.role = p.s.loan; p.s = p.s.lnS || {}; p.loaning = true;
+  }
 
   // ---- 1. 실제로 실행되는 행동 모으기
   let list = [];
@@ -157,11 +169,9 @@ function resolveNight(room) {
         addHeal(t, p); if (t.id === p.id) p.s.lastSelfHeal = day;
         U.touch(room, p, t); break;
       case 'angel':
-        p.s.angelUsed = true; U.touch(room, p, t);
-        if (x.mode === 'revive') revives.push({ t, by: p, type: 'angel' });
-        else if (U.teamOf(t) === 'citizen') addHeal(t, p);
-        else priv(p, `😇 ${t.name}님은 시민 팀이 아니어서 소생에 실패했습니다.`);
-        break;
+        p.s.angelUsed = true; p.s.blessT = t.id; t.blessed = true; t.blessedBy = p.id;
+        priv(p, `✨ ${t.name}님에게 성스러운 가호를 내렸습니다! (이번 판 동안 첫 공격 1번을 막아 줍니다)`);
+        U.touch(room, p, t); break;
       case 'priest':
         p.s.priestUsed = true; revives.push({ t, by: p, type: 'priest' }); break;
       case 'scientist':
@@ -170,7 +180,17 @@ function resolveNight(room) {
         if (x.mode === 'heal') { addHeal(t, p); priv(p, `⚗ ${t.name}님에게 살리는 물약을 사용했습니다. (이제 물약을 더 쓸 수 없습니다)`); }
         else { attacks.push({ kind: 'potion', by: p, t }); priv(p, `⚗ ${t.name}님에게 죽이는 물약을 사용했습니다. (이제 물약을 더 쓸 수 없습니다)`); }
         break;
-      case 'destroyer': attacks.push({ kind: 'destroy', by: p, t }); U.touch(room, p, t); break;
+      case 'destroyer': p.s.destroyUsed = (p.s.destroyUsed || 0) + 1; attacks.push({ kind: 'destroy', by: p, t }); U.touch(room, p, t); break;
+      case 'gambler': p.s.gamble = t.id; break;
+      case 'thief': {
+        p.s.stolenIds = (p.s.stolenIds || []).concat(t.id);
+        U.touch(room, p, t);
+        if (LOANABLE.includes(t.role)) {
+          p.s.loan = t.role; p.s.lnS = {};
+          priv(p, `🧤 ${t.name}님의 직업은 "${U.roleName(t.role)}"였고, 그 능력을 훔쳤습니다! 다음 밤부터 딱 1번 쓸 수 있어요. (${ROLE[t.role].desc})`);
+        } else priv(p, `🧤 ${t.name}님의 직업은 "${U.roleName(t.role)}"였지만, 훔쳐서 쓸 수 있는 밤 능력이 없었습니다. (이 사람은 다시 고를 수 없어요)`);
+        break;
+      }
       case 'assassin': attacks.push({ kind: 'assassin', by: p, t }); U.touch(room, p, t); break;
       default: break;
     }
@@ -193,12 +213,12 @@ function resolveNight(room) {
     deaths.push({ p: victim, how });
     if (kind === 'destroy') victim.destroyed = true;
     // 테러리스트: 자신을 죽인 사람을 지목했다면 함께 자폭
-    if (victim.role === 'terrorist' && by && victim.s.boomNight === by.id && by.alive && by !== victim) {
+    if (victim.role === 'terrorist' && by && victim.s.boomNight === by.id && by.alive && by !== victim && !U.survive(room, by)) {
       by.alive = false; nightDeadIds.add(by.id);
       deaths.push({ p: by, how: '테러리스트의 자폭에 휘말려 사망했습니다.' });
     }
   };
-  const HOW = { mafia: '마피아에게 살해당했습니다.', potion: '정체불명의 공격으로 사망했습니다.', madman: '정체불명의 공격으로 사망했습니다.', destroy: '정체불명의 공격으로 사망했습니다.', assassin: '정체불명의 공격으로 사망했습니다.' };
+  const HOW = { mafia: '마피아에게 살해당했습니다.', potion: '정체불명의 공격으로 사망했습니다.', madman: '정체불명의 공격으로 사망했습니다.', destroy: '파괴당했습니다. (마피아의 공격이 아닙니다)', assassin: '정체불명의 공격으로 사망했습니다.' };
   let mafiaFailMsg = null;
   for (const at of attacks) {
     let t = at.t;
@@ -213,6 +233,12 @@ function resolveNight(room) {
       else if (at.kind === 'mafia' && t.role === 'soldier' && !t.s.shieldUsed) { t.s.shieldUsed = true; fail = 'soldier'; }
       else if (isHealed(t, at.kind)) fail = 'heal';
     }
+    if (!fail && t.blessed) { // 사제의 가호: 첫 공격 1번 무효 (공격 종류 무관)
+      t.blessed = false; fail = 'bless';
+      const pr = t.blessedBy ? U.byId(room, t.blessedBy) : null;
+      if (pr) priv(pr, `✨ 가호를 내린 ${t.name}님이 공격을 받았지만 가호가 막아 냈습니다! (가호는 사라졌어요)`);
+    }
+    if (!fail && U.survive(room, t)) fail = 'survive'; // 생존자: 2번까지 버틴다 (능력 무시도 통하지 않음)
     if (fail) {
       if (at.kind === 'mafia') mafiaFailMsg = fail === 'heal' ? '🩺 마피아의 습격이 있었지만 누군가가 살려냈습니다!' : '🛡 마피아의 습격이 있었지만 아무도 죽지 않았습니다.';
       continue;
@@ -240,6 +266,20 @@ function resolveNight(room) {
     r.t.alive = true; revived.push(r.t);
   }
 
+  // ---- 8.5 도박사: 예측한 사람이 이번 밤에 실제로 죽었는지 확인
+  let gamblerWin = null;
+  for (const g of U.alive(room)) {
+    if (g.role !== 'gambler' || !g.s.gamble) continue;
+    const t = U.byId(room, g.s.gamble); g.s.gamble = null;
+    if (!t) continue;
+    const need = room.settings.gamblerHits;
+    if (nightDeadIds.has(t.id) && !t.alive) {
+      g.s.hits = (g.s.hits || 0) + 1;
+      priv(g, `🎰 예측 적중! ${t.name}님이 죽었습니다. (${g.s.hits}/${need})`);
+      if (g.s.hits >= need && !gamblerWin) gamblerWin = { kind: 'solo', ids: [g.id], text: `🎰 도박사 ${g.name}님이 ${need}번 적중시켜 혼자 우승했습니다!` };
+    } else priv(g, `🎰 빗나갔습니다. ${t.name}님은 죽지 않았어요. (${g.s.hits || 0}/${need})`);
+  }
+
   // ---- 9. 지원자: 자신에게 능력을 쓴 사람의 직업 얻기
   for (const v of U.alive(room)) {
     if (v.role !== 'volunteer' || !v.s.volPick) continue;
@@ -247,6 +287,16 @@ function resolveNight(room) {
     if (!t) continue;
     const touched = room.touches.some((c) => c.from === t.id && c.to === v.id);
     if (touched && ROLE[t.role].team === 'citizen' && t.role !== 'volunteer' && t.role !== 'couple') copyRoleNote(room, v, t.role);
+  }
+
+  // 도둑: 훔친 능력을 썼으면 되돌리고 다시 훔칠 수 있게 한다
+  for (const sw of swapped) {
+    const p = sw.p, ls = p.s;
+    p.role = sw.role; p.s = sw.s; p.loaning = false;
+    if (ls && ls.known) p.s.known = Object.assign(p.s.known || {}, ls.known);
+    if (ls && ls.report) p.s.report = ls.report;
+    p.s.loan = null; p.s.lnS = null;
+    priv(p, '🧤 훔친 능력을 사용했습니다. 이제 다시 다른 사람의 능력을 훔칠 수 있어요.');
   }
 
   // ---- 10. 아침 공지
@@ -266,7 +316,7 @@ function resolveNight(room) {
       if (g.role !== 'gravedigger') continue;
       const src = deaths.map((d) => d.p).find((p) => p !== g && !p.alive);
       let role = src ? src.role : 'citizen';
-      if (['couple', 'beggar', 'rich', 'gravedigger', 'joker'].includes(role)) role = 'citizen';
+      if (['couple', 'beggar', 'rich', 'gravedigger', 'joker', 'follower'].includes(role)) role = 'citizen';
       copyRoleNote(room, g, role);
     }
   }
@@ -278,7 +328,7 @@ function resolveNight(room) {
 
   // 기자 속보
   for (const p of room.players) {
-    if (p.role === 'reporter' && p.s.report && p.s.report.day === day) {
+    if ((p.role === 'reporter' || p.role === 'thief') && p.s.report && p.s.report.day === day) {
       if (p.alive) {
         const t = U.byId(room, p.s.report.target);
         U.sys(room, `📰 속보! ${t.name}님의 직업은 "${U.roleName(U.shownRole(t))}"입니다.`);
@@ -296,6 +346,7 @@ function resolveNight(room) {
       room.pendingWin = { kind: 'duo', ids: [rich.id, beggar.id], text: `💰 부자 ${rich.name}님과 거지 ${beggar.name}님이 우승했습니다!` };
     }
   }
+  if (gamblerWin && !room.pendingWin) room.pendingWin = gamblerWin;
   room.night = null;
 }
 

@@ -23,6 +23,7 @@ const LEVELS = {
 const LEVEL_KEYS = Object.keys(LEVELS);
 const FILLERS = ['안녕하세요! 다들 잘 부탁해요.', '아직은 단서가 없네요. 의견 좀 들어봐요.', '어제 밤에 무슨 일이 있었죠?', '조용한 사람이 신경 쓰이네요.', '투표는 신중하게 해요.', '일단 지켜볼게요.', '의심 가는 사람 있어요?'];
 const ONCE = new Set(['reporter', 'priest', 'angel', 'scientist']);
+const effRole = (p) => (p.role === 'thief' && p.s.loan ? p.s.loan : p.role); // 도둑은 훔친 능력의 직업처럼 행동
 const ROLE_BY_NAME = {}; for (const r of ROLES) ROLE_BY_NAME[r.name] = r.key;
 const CLAIMABLE = ['police', 'doctor', 'soldier', 'politician', 'bodyguard', 'detective', 'reporter', 'medium'];
 
@@ -231,7 +232,7 @@ function pickNight(room, p, opt, mode) {
   const L = lv(room, p), A = ai(room), b = pm(p);
   const cands = opt.targets.map((id) => U.byId(room, id)).filter(Boolean);
   if (!cands.length) return null;
-  const role = p.role, team = U.teamOf(p), N = L.noise;
+  const role = effRole(p), team = U.teamOf(p), N = L.noise;
   const S = (c) => sus(room, p, c);
   const trust = (c) => -S(c);
 
@@ -274,10 +275,12 @@ function pickNight(room, p, opt, mode) {
       if (mode === 'kill') return (best(cands, (c) => S(c), N) || {}).id;
       return (best(cands, (c) => (claimedRole(room, c.id, 'police') ? cred(room, p, c.id, 'police') * 140 : 0) + (c.id === p.id ? 20 : 0) + trust(c) * 0.1, N) || {}).id;
     }
-    case 'angel': {
-      if (mode === 'revive') return (best(cands, (c) => (A.dead[c.id] && A.dead[c.id].how === 'mafia' ? 90 : -30) + (claimedRole(room, c.id, 'police') ? 80 : 0), N) || {}).id;
-      return (best(cands, (c) => (claimedRole(room, c.id, 'police') ? cred(room, p, c.id, 'police') * 140 : 0) + (c.id === p.id ? 20 : 0) + trust(c) * 0.1, N) || {}).id;
-    }
+    case 'angel': // 사제: 위협적인 진짜(처럼 보이는) 경찰·의사, 아니면 자신
+      return (best(cands, (c) => (claimedRole(room, c.id, 'police') ? cred(room, p, c.id, 'police') * 160 : 0) + (claimedRole(room, c.id, 'doctor') ? 60 : 0) + (c.id === p.id ? 30 : 0) + trust(c) * 0.12, N) || {}).id;
+    case 'gambler': // 마피아가 노릴 만한 사람(경찰·의사로 믿음직한 사람)을 예측
+      return (best(cands, (c) => (claimedRole(room, c.id, 'police') ? 120 : 0) + (claimedRole(room, c.id, 'doctor') ? 80 : 0) + (claimedRole(room, c.id, 'bodyguard') ? 40 : 0) + trust(c) * 0.15, N * 2) || {}).id;
+    case 'thief': // 훔칠 사람: 능력이 있을 것 같은(경찰·의사로 주장한) 사람, 한 번 고른 사람은 제외됨
+      return (best(cands, (c) => (claimedRole(room, c.id, 'police') ? 120 : 0) + (claimedRole(room, c.id, 'doctor') ? 90 : 0) + (claimedRole(room, c.id, 'bodyguard') ? 40 : 0) + (A.talk[c.id] > 0 ? 10 : 0), N * 2) || {}).id;
     default: return rnd(cands).id;
   }
 }
@@ -286,22 +289,18 @@ function pickNight(room, p, opt, mode) {
 function worthUsing(room, p, opt) {
   const L = lv(room, p), A = ai(room);
   if (!chance(L.once)) return false;
-  if (p.role === 'priest') return room.players.some((x) => !x.alive && !x.destroyed && A.dead[x.id] && A.dead[x.id].how === 'mafia');
-  if (p.role === 'angel') return room.day >= 2 || room.players.some((x) => !x.alive && !x.destroyed);
-  if (p.role === 'scientist') return room.day >= 2;
+  if (effRole(p) === 'priest') return room.players.some((x) => !x.alive && !x.destroyed && A.dead[x.id] && A.dead[x.id].how === 'mafia');
+  if (effRole(p) === 'angel') return true;
+  if (effRole(p) === 'scientist') return room.day >= 2;
   return true;
 }
 function chooseMode(room, p, opt) {
   const A = ai(room), b = pm(p);
   const has = (k) => opt.modes.some((x) => x.key === k);
-  if (p.role === 'scientist') {
+  if (effRole(p) === 'scientist') {
     const topSus = Math.max(...U.alive(room).filter((x) => x !== p).map((x) => sus(room, p, x)), -1000);
     if (topSus >= 150 && has('kill')) return 'kill';
     return has('heal') ? 'heal' : opt.modes[0].key;
-  }
-  if (p.role === 'angel') {
-    const deadOk = room.players.some((x) => !x.alive && !x.destroyed && A.dead[x.id] && A.dead[x.id].how === 'mafia');
-    return deadOk && chance(0.7) ? 'revive' : 'save';
   }
   return opt.mode;
 }
@@ -312,7 +311,7 @@ function botNight(room, p) {
   let opt = E.AB.nightOptions(room, p);
   if (!opt) return;
   if (chance(L.skip)) return;
-  if (ONCE.has(p.role) && !worthUsing(room, p, opt)) return;
+  if (ONCE.has(effRole(p)) && !worthUsing(room, p, opt)) return;
   if (opt.noTarget) { // 미치광이: 능력을 쓸지 말지
     const n = U.alive(room).length;
     act(room, p, { type: 'night', target: null, mode: chance(n >= 8 ? 0.6 : n >= 5 ? 0.4 : n >= 4 ? 0.25 : 0.1) ? 'on' : 'off' });
@@ -610,7 +609,7 @@ function botVote(room, p) {
   const alive = U.alive(room);
   const mates = alive.filter((x) => knownMate(p, x));
   let cands = alive.filter((x) => x !== p && !immune(room, x));
-  if (!room.settings.selfVote) { /* 자신 제외 이미 */ }
+  if (p.role === 'follower' && p.s.master) { const nm = cands.filter((x) => x.id !== p.s.master); if (nm.length) cands = nm; } // 신봉자는 주인을 처형하지 않는다
   if (!cands.length) return;
   const voters = alive.filter((x) => E.canVote(room, x)).length;
   const need = Math.floor(voters / 2) + 1;
