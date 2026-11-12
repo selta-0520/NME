@@ -34,6 +34,7 @@ function nightOptions(room, p, modeOverride) {
     case 'programmer': return o('💻 익명 메시지를 보낼 사람', others, { text: true });
     case 'ninja': return o('🥷 상호작용을 바꿀 사람', others);
     case 'detective': return o('🕵 비교할 첫 번째 사람 (밤)', A);
+    case 'inspector': return o('🔎 직업 후보를 볼 사람', others);
     case 'bodyguard': return o('🛡 지킬 사람', others);
     case 'destroyer': {
       const left = U.destroyLimit(room) - (p.s.destroyUsed || 0);

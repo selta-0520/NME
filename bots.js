@@ -271,7 +271,7 @@ function pickNight(room, p, opt, mode) {
   switch (role) {
     case 'police': return (best(cands, (c) => (b.checks[c.id] ? -2000 : 0) + S(c), N) || {}).id;
     case 'spy': return (best(cands, (c) => (b.checks[c.id] || b.known[c.id] ? -2000 : 0) + (claimedRole(room, c.id, 'police') || claimedRole(room, c.id, 'doctor') ? 90 : 0) + trust(c) * 0.1, N) || {}).id;
-    case 'detective': return (best(cands, (c) => S(c), N) || {}).id;
+    case 'detective': case 'inspector': return (best(cands, (c) => S(c), N) || {}).id;
     case 'doctor': {
       const credPolice = (c) => (claimedRole(room, c.id, 'police') ? cred(room, p, c.id, 'police') : 0);
       return (best(cands, (c) => credPolice(c) * 160 + (c.id === p.id ? 25 : 0) + trust(c) * 0.12 + (b.checks[c.id] === 'clean' ? 25 : 0), N) || {}).id;

@@ -174,6 +174,16 @@ function resolveNight(room) {
         if (U.isMafiaKnown(t)) U.contact(room, p, t);
         U.touch(room, p, t); break;
       }
+      case 'inspector': { // 🔎 형사: 직업 후보 3개 (진짜 1 + 가짜 2), 시민 팀 직업이 반드시 1개 이상
+        const real = t.role, keys = ROLES.map((r) => r.key).filter((k) => k !== real);
+        const pickOf = (list) => list[Math.floor(Math.random() * list.length)];
+        const fakes = [];
+        if (ROLE[real].team !== 'citizen') fakes.push(pickOf(keys.filter((k) => ROLE[k].team === 'citizen')));
+        while (fakes.length < 2) { const k = pickOf(keys.filter((x) => !fakes.includes(x))); fakes.push(k); }
+        const list = U.shuffle([real, ...fakes]);
+        priv(p, `🔎 ${t.name}님의 직업 후보: ${list.map((k) => ROLE[k].name).join(' / ')} (이 중 하나가 진짜예요)`);
+        U.touch(room, p, t); break;
+      }
       case 'police':
         priv(p, `🔍 조사 결과: ${t.name}님은 ${U.shownRole(t) === 'mafia' ? '마피아입니다.' : '마피아가 아닙니다.'}`);
         U.touch(room, p, t); break;

@@ -38,6 +38,7 @@ const ROLES = [
   R('fugitive', '도망자', 'citizen', '투표로 죽을 때 1번 살 수 있다. 도망친 뒤에는 투표권을 잃는다.'),
   R('hermit', '은둔자', 'citizen', '마피아에게 살해당하지 않지만, 경찰·기자 등 모든 조사 결과에서 마피아로 표시된다.'),
   R('detective', '탐정', 'citizen', '밤에 1명, 투표시간에 1명을 골라 그 둘이 같은 팀인지 확인할 수 있다.'),
+  R('inspector', '형사', 'citizen', '밤마다 1명을 지목하면 그 사람의 직업 후보 3개가 보인다. 진짜는 그중 1개뿐이고, 시민 팀 직업이 반드시 1개 이상 들어 있다.'),
   R('scientist', '과학자', 'citizen', '(1회용) 밤에 살리는 물약과 죽이는 물약 중 하나만 골라 쓸 수 있다. 하나를 쓰면 나머지는 쓸 수 없다.'),
   R('bodyguard', '경호원', 'citizen', '밤에 1명을 지킨다. 그 사람이 공격으로 죽게 되면 모든 플레이어가 공격한 사람이 누군지 알게 된다. (직업은 알려지지 않는다)'),
   R('angel', '사제', 'citizen', '(1회용) 밤에 산 사람 1명(자신 포함)에게 "성스러운 가호"를 내린다. 가호를 받은 사람은 이번 판 동안 처음 받는 공격 1번을 무효로 만든다. (공격 종류와 상관없이 막아 준다) 누구에게 가호를 내렸는지는 사제만 알 수 있다.'),
@@ -59,7 +60,7 @@ const ROLES = [
 // 한 판에 나올 수 있는 직업별 최대 인원 (커플·거지&부자는 1쌍, 단독 승리 직업은 1명)
 const ONE = new Set(['couple', 'beggar', 'rich', 'joker', 'destroyer', 'revolutionary']);
 // 도둑이 훔칠 수 있는 밤 능력 (나머지는 훔쳐도 쓸 수 없다)
-const LOANABLE = ['spy', 'police', 'doctor', 'reporter', 'thug', 'medium', 'terrorist', 'priest', 'programmer', 'ninja', 'bodyguard', 'destroyer', 'ghost', 'scientist', 'madman', 'angel'];
+const LOANABLE = ['spy', 'police', 'doctor', 'reporter', 'thug', 'medium', 'terrorist', 'priest', 'programmer', 'ninja', 'bodyguard', 'destroyer', 'ghost', 'scientist', 'madman', 'angel', 'inspector'];
 const roleCap = (key) => (key === 'mafia' || key === 'citizen' ? 20 : ONE.has(key) ? 1 : 4);
 
 const ROLE = {};
