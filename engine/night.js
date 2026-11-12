@@ -174,12 +174,20 @@ function resolveNight(room) {
         if (U.isMafiaKnown(t)) U.contact(room, p, t);
         U.touch(room, p, t); break;
       }
-      case 'inspector': { // 🔎 형사: 직업 후보 3개 (진짜 1 + 가짜 2), 시민 팀 직업이 반드시 1개 이상
-        const real = t.role, keys = ROLES.map((r) => r.key).filter((k) => k !== real);
+      case 'inspector': { // 🔎 형사: 직업 후보 3개 (진짜 1 + 가짜 2). 시민·마피아·중립 팀에서 1개씩, 중립이 없는 판이면 시민/마피아 1+2 또는 2+1
+        const real = t.role, rt = ROLE[real].team;
         const pickOf = (list) => list[Math.floor(Math.random() * list.length)];
+        const hasNeutral = rt === 'neutral' || room.players.some((x) => ROLE[x.role].team === 'neutral');
+        const pool = (team) => ROLES.filter((r) => r.team === team && r.key !== real && !(team === 'neutral' && r.key === 'joker' && room.jokerBefore)).map((r) => r.key); // 광대가 섞은 뒤에는 중립 후보에 광대가 나오지 않는다
         const fakes = [];
-        if (ROLE[real].team !== 'citizen') fakes.push(pickOf(keys.filter((k) => ROLE[k].team === 'citizen')));
-        while (fakes.length < 2) { const k = pickOf(keys.filter((x) => !fakes.includes(x))); fakes.push(k); }
+        if (hasNeutral) {
+          for (const team of ['citizen', 'mafia', 'neutral']) if (team !== rt) fakes.push(pickOf(pool(team)));
+        } else {
+          const cNum = Math.random() < 0.5 ? 1 : 2; // 시민 팀 후보 수 (나머지는 마피아 팀)
+          const want = { citizen: cNum, mafia: 3 - cNum };
+          want[rt] -= 1; // 진짜가 속한 팀 자리 하나는 진짜가 차지
+          for (const team of ['citizen', 'mafia']) for (let i = 0; i < want[team]; i++) fakes.push(pickOf(pool(team).filter((k) => !fakes.includes(k))));
+        }
         const list = U.shuffle([real, ...fakes]);
         priv(p, `🔎 ${t.name}님의 직업 후보: ${list.map((k) => ROLE[k].name).join(' / ')} (이 중 하나가 진짜예요)`);
         U.touch(room, p, t); break;
