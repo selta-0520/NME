@@ -149,7 +149,7 @@
   <div class="card">
     <div style="margin-bottom:6px;color:var(--dim);font-size:13px">친구가 알려준 방 코드</div>
     <div class="row">
-      <input type="text" id="codeInput" maxlength="4" placeholder="예: AB3K" autocomplete="off" style="text-transform:uppercase;letter-spacing:4px;font-weight:700">
+      <input type="text" id="codeInput" maxlength="5" placeholder="예: AB3K7" autocomplete="off" style="text-transform:uppercase;letter-spacing:4px;font-weight:700">
       <button id="joinBtn" class="ghost" style="white-space:nowrap">입장</button>
     </div>
   </div>
@@ -269,11 +269,29 @@ function renderStats() {
 }
 renderStats();
 
+// ---- 🤬 욕설 가리기 (사람마다 켜고 끌 수 있고, 내 화면에서만 가려져요)
+const BAD = ['시발', '씨발', '시팔', '씨팔', '씨빨', '쉬발', 'ㅅㅂ', 'ㅆㅂ', 'ㅂㅅ', '병신', '븅신', '개새끼', '개새', '새끼', '좆', '존나', '졸라', '지랄', 'ㅈㄹ', '염병', '엠창', '엿먹', '니미', '느금', '씹', '꺼져', '미친놈', '미친년', '또라이'];
+const BAD_EN = ['fuck', 'shit', 'bitch', 'asshole', 'bastard', 'dumbass', 'cunt'];
+const SEP = '[\\s.\\-_*~!@#$%^&+=|/,;:\'"?]*';
+const BAD_RE = new RegExp(BAD.map((w) => [...w].join(SEP)).join('|') + '|\\b(?:' + BAD_EN.map((w) => [...w].join(SEP)).join('|') + ')\\b', 'giu');
+function filterOn() { try { return localStorage.getItem('nme_filter') !== 'off'; } catch (e) { return true; } }
+function censor(s) { return filterOn() && s ? String(s).replace(BAD_RE, (m) => '*'.repeat([...m].length)) : s; }
+let msgLog = [];
+function toggleFilter() {
+  try { localStorage.setItem('nme_filter', filterOn() ? 'off' : 'on'); } catch (e) { /* */ }
+  syncFilterBtn();
+  const box = $('#msgs'); box.innerHTML = ''; const log = msgLog; msgLog = []; log.forEach((m) => addMsg(m, false));
+  if (st) render();
+}
+function syncFilterBtn() { const b = $('#filterBtn'); if (b) b.textContent = filterOn() ? '🤬 욕설 가림: 켜짐' : '🤬 욕설 가림: 꺼짐'; }
+
 // ---- 💬 빠른 반응
 const QUICK = ['🤔 수상해요', '👍 동의해요', '🙋 저는 시민이에요', '🕊 신중하게 투표해요', '🔍 근거가 뭐죠?', '😅 잘 모르겠어요'];
 {
   const q = $('#quick');
   for (const text of QUICK) q.append(h('button', { type: 'button', onclick: () => act('chat', { text }) }, text));
+  q.append(h('button', { type: 'button', id: 'filterBtn', class: 'ghost', onclick: toggleFilter }, ''));
+  syncFilterBtn();
 }
 
 async function enter(path, body) {
@@ -290,7 +308,7 @@ async function enter(path, body) {
 $('#createBtn').onclick = () => enter('/api/create', {});
 $('#joinBtn').onclick = () => {
   const code = $('#codeInput').value.trim().toUpperCase();
-  if (code.length !== 4) { toast('방 코드 4자리를 입력해 주세요.'); return; }
+  if (code.length !== 5) { toast('방 코드 5자리를 입력해 주세요.'); return; }
   enter('/api/join', { code });
 };
 $('#codeInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('#joinBtn').click(); });
@@ -303,7 +321,7 @@ function connect() {
   es = new EventSource(`/api/events?code=${sess.code}&token=${sess.token}`);
   es.addEventListener('state', (e) => { st = JSON.parse(e.data); offset = st.now - Date.now(); render(); });
   es.addEventListener('chat', (e) => addMsg(JSON.parse(e.data), true));
-  es.addEventListener('backlog', (e) => { $('#msgs').innerHTML = ''; JSON.parse(e.data).forEach((m) => addMsg(m, false)); });
+  es.addEventListener('backlog', (e) => { $('#msgs').innerHTML = ''; msgLog = []; JSON.parse(e.data).forEach((m) => addMsg(m, false)); });
   es.addEventListener('kicked', () => leaveLocal('방에서 나왔어요.'));
   es.onerror = () => {
     if (!sess) return;
@@ -338,13 +356,14 @@ function bigNote(text, k) {
   setTimeout(() => n.remove(), 3600);
 }
 function addMsg(m, live) {
+  msgLog.push(m); if (msgLog.length > 250) msgLog.shift();
   const box = $('#msgs');
   const near = box.scrollHeight - box.scrollTop - box.clientHeight < 60;
   const bk = bigKind(m);
   const row = h('div', { class: 'm ' + m.ch + (bk ? ' big k-' + bk.k : '') });
-  if (bk && live && bk.banner) bigNote(m.text, bk.k);
-  if (m.name) row.append(h('b', null, m.name + (m.ch === 'mafia' ? ' 🔪' : m.ch === 'dead' ? ' 👻' : m.ch === 'spec' ? ' 👀' : m.ch === 'couple' ? ' 💕' : '') + ':'));
-  row.append(m.text);
+  if (bk && live && bk.banner) bigNote(censor(m.text), bk.k);
+  if (m.name) row.append(h('b', null, censor(m.name) + (m.ch === 'mafia' ? ' 🔪' : m.ch === 'dead' ? ' 👻' : m.ch === 'spec' ? ' 👀' : m.ch === 'couple' ? ' 💕' : '') + ':'));
+  row.append(censor(m.text));
   box.append(row);
   while (box.children.length > 250) box.firstChild.remove();
   if (near) box.scrollTop = box.scrollHeight;
@@ -474,7 +493,7 @@ function render() {
   const ci = chatInfo();
   $('#chatlabel').textContent = ci.label;
   $('#chatinput').disabled = !ci.can; $('#chatsend').disabled = !ci.can;
-  for (const b of $('#quick').children) b.disabled = !ci.can;
+  for (const b of $('#quick').children) if (b.id !== 'filterBtn') b.disabled = !ci.can;
   $('#chatinput').placeholder = ci.can ? '메시지 입력' : '말할 수 없는 시간이에요';
   if (settingsOpen) syncSettings();
 }
@@ -588,7 +607,7 @@ function playerCard(q, opts) {
   const card = h('div', { class: cls.join(' '), onclick: click ? () => clickPlayer(q) : null });
   if (q.host) card.append(h('span', { class: 'crown' }, '👑'));
   if (q.bot) card.append(h('span', { class: 'crown', style: 'left:auto;right:6px' }, '🤖'));
-  card.append(h('div', { class: 'pname' }, q.name));
+  card.append(h('div', { class: 'pname' }, censor(q.name)));
   if (q.role) card.append(h('div', { class: 'ptag ' + ROLE[q.role].team }, ROLE[q.role].name));
   if (!q.role && memoOn(q)) {
     const mm = getMemo()[q.id];

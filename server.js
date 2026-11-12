@@ -137,7 +137,7 @@ function newCode() {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
   for (;;) {
     let c = '';
-    for (let i = 0; i < 4; i++) c += chars[crypto.randomInt(chars.length)];
+    for (let i = 0; i < 5; i++) c += chars[crypto.randomInt(chars.length)];
     if (!rooms.has(c)) return c;
   }
 }
@@ -567,13 +567,32 @@ function onDisconnect(room, p) {
 class Err extends Error {}
 const fail = (m) => { throw new Err(m); };
 
+// 🚫 도배 방지: 짧은 시간에 너무 많이 / 같은 말 반복 / 같은 글자 길게 반복하면 막는다 (봇은 제외)
+function cleanChat(p, raw) {
+  let text = String(raw || '').replace(/\s+/g, ' ').trim().slice(0, 200);
+  text = text.replace(/(.)\1{6,}/gu, '$1$1$1$1$1$1'); // "ㅋㅋㅋㅋㅋㅋㅋㅋㅋ…" 는 6개까지만
+  if (!text) return '';
+  if (p.bot) return text;
+  const now = Date.now(), f = (p.flood = p.flood || { times: [], last: '', rep: 0, lastAt: 0, mute: 0 });
+  if (now < f.mute) fail(`도배 방지: ${Math.ceil((f.mute - now) / 1000)}초 뒤에 다시 보낼 수 있어요.`);
+  f.times = f.times.filter((x) => now - x < 6000);
+  if (f.times.length >= 6) { f.mute = now + 10000; f.times = []; fail('도배 방지: 너무 빨리 보내서 10초 동안 말할 수 없어요.'); }
+  if (text === f.last && now - f.lastAt < 30000) {
+    f.rep++;
+    if (f.rep >= 4) { f.mute = now + 10000; f.rep = 0; fail('도배 방지: 같은 말을 계속 보내서 10초 동안 말할 수 없어요.'); }
+    if (f.rep >= 2) fail('같은 말을 반복해서 보낼 수 없어요.');
+  } else f.rep = 0;
+  f.last = text; f.lastAt = now; f.times.push(now);
+  return text;
+}
+
 function specAction(room, p, b) {
   switch (b.type) {
     case 'chat': {
-      const text = String(b.text || '').replace(/\s+/g, ' ').trim().slice(0, 200);
-      if (!text) return;
       const now = Date.now();
       if (now - p.lastChat < 250) fail('너무 빨리 보내고 있어요.');
+      const text = cleanChat(p, b.text);
+      if (!text) return;
       p.lastChat = now;
       addChat(room, 'spec', text, p);
       return;
@@ -600,13 +619,13 @@ function handleAction(room, p, b) {
   const isHost = room.hostId === p.id;
   switch (b.type) {
     case 'chat': {
-      const text = String(b.text || '').replace(/\s+/g, ' ').trim().slice(0, 200);
-      if (!text) return;
       const now = Date.now();
       if (now - p.lastChat < 250) fail('너무 빨리 보내고 있어요.');
-      p.lastChat = now;
       const info = E.chatInfo(room, p);
       if (!info.ch) fail(info.label.replace(/^\S+\s/, ''));
+      const text = cleanChat(p, b.text);
+      if (!text) return;
+      p.lastChat = now;
       addChat(room, info.ch, text, p);
       if (info.ch === 'all') p.chats = (p.chats || 0) + 1;
       if (p.role === 'beggar' && p.s.met && p.alive && info.ch === 'all') scheduleBeg(room); // 거지가 말했으니 카운트다운 새로 시작
