@@ -1,5 +1,5 @@
 'use strict';
-// NME (New Mafia Extended Mix) 서버 — 외부 패키지 없이 Node.js 기본 기능만 사용합니다.
+// NME (Enemy Mafia · New Mafia Extended Mix) 서버 — 외부 패키지 없이 Node.js 기본 기능만 사용합니다.
 // 실행: node server.js  →  http://localhost:3000
 // 게임 규칙(직업 능력)은 engine/ 폴더에 있습니다.
 

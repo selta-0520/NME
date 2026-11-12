@@ -1,4 +1,5 @@
-# 🎭 NME (New Mafia Extended Mix)
+# 🎭 NME (Enemy Mafia)
+_New Mafia Extended Mix_
 
 특수 직업이 가득한 온라인 마피아 게임입니다. 4~50명, 직업 41종(시민 포함). 통칭 "애너미(enemy)".
 
