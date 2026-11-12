@@ -75,6 +75,7 @@
   .m.priv{color:var(--ok);font-weight:600}
   .m.mafia{color:var(--mafia)}
   .m.dead{color:var(--dim);font-style:italic}
+  .m.spec{color:#8fc3ff;font-style:italic}
   .m.couple{color:#ff8fd0}
   #chatlabel{font-size:12px;color:var(--dim);padding:2px 12px}
   #chatform{display:flex;gap:6px;padding:6px 10px calc(8px + env(safe-area-inset-bottom))}
@@ -343,7 +344,7 @@ function addMsg(m, live) {
   const bk = bigKind(m);
   const row = h('div', { class: 'm ' + m.ch + (bk ? ' big k-' + bk.k : '') });
   if (bk && live && bk.banner) bigNote(m.text, bk.k);
-  if (m.name) row.append(h('b', null, m.name + (m.ch === 'mafia' ? ' 🔪' : m.ch === 'dead' ? ' 👻' : m.ch === 'couple' ? ' 💕' : '') + ':'));
+  if (m.name) row.append(h('b', null, m.name + (m.ch === 'mafia' ? ' 🔪' : m.ch === 'dead' ? ' 👻' : m.ch === 'spec' ? ' 👀' : m.ch === 'couple' ? ' 💕' : '') + ':'));
   row.append(m.text);
   box.append(row);
   while (box.children.length > 250) box.firstChild.remove();
@@ -352,6 +353,7 @@ function addMsg(m, live) {
 // 채팅 가능 여부와 안내 문구는 서버가 정해서 보내 줍니다 (me.chat)
 function chatInfo() {
   if (!st) return { can: false, label: '' };
+  if (st.spectator) return { can: true, label: '👀 관전자끼리만 보이는 대화예요 (참가자에게는 안 보여요)' };
   if (!st.me) return { can: true, label: '전체 대화' };
   return { can: !!st.me.chat.ch, label: st.me.chat.label };
 }
@@ -660,6 +662,7 @@ function renderMain() {
   const hadFocus = document.activeElement && document.activeElement.id === 'progtext';
   const main = $('#main'); main.innerHTML = '';
   if (st.phase === 'lobby') { predDraft = {}; return renderLobby(main); }
+  if (st.spectator) return renderSpectator(main);
   const me = st.me;
   if (lastPhaseKey !== phaseKey()) { lastPhaseKey = phaseKey(); uiMode = 'vote'; progDraft = null; boomPick = null; }
   if (!me.voteAbility) uiMode = 'vote';
@@ -786,6 +789,34 @@ function endExtras(main) {
   }
 }
 
+// 👀 관전자 화면 (게임 중·종료 후)
+function renderSpectator(main) {
+  main.append(h('div', { class: 'card' }, h('div', { class: 'albl' }, '👀 관전 중'),
+    h('div', { class: 'note' }, '참가자와는 대화할 수 없어요. 아래 대화창은 관전자끼리만 보여요. 직업은 죽거나 게임이 끝나 공개된 것만 볼 수 있어요.')));
+  if (st.phase === 'ended') {
+    const w = st.winner || { kind: 'draw', text: '게임 종료' };
+    main.append(h('div', { class: 'card banner ' + w.kind }, w.text));
+    endExtras(main);
+  }
+  if (st.phase === 'vote') main.append(h('div', { class: 'hint' }, `투표 ${st.voted}/${st.eligible}명 완료`));
+  if (st.defense && (st.phase === 'defense' || st.phase === 'confirm')) main.append(h('div', { class: 'hint' }, st.phase === 'defense' ? `🛡 ${st.defense.name}님의 최후의 반론` : `⚖️ ${st.defense.name}님 처형 찬반투표 중`));
+  const grid = h('div', { class: 'grid' });
+  for (const q of st.players) {
+    const c = playerCard(q, {});
+    if (st.phase === 'vote' && st.tally && st.tally[q.id]) c.append(h('div', { class: 'ptag' }, `🗳 ${st.tally[q.id]}표`));
+    grid.append(c);
+  }
+  main.append(grid);
+  specList(main);
+  main.append(h('div', { class: 'actions' }, h('button', { class: 'ghost', onclick: () => { act('leave'); leaveLocal(); } }, '나가기')));
+}
+function specList(main) {
+  if (!st.specs || !st.specs.length) return;
+  main.append(h('div', { class: 'card' }, h('div', { class: 'albl' }, `👀 관전자 ${st.specs.length}명`),
+    h('div', { class: 'chips' }, st.specs.map((x) => h('span', { class: 'ptag' + (x.connected ? '' : ' off') }, x.name + (x.id === st.meId ? ' (나)' : ''),
+      isHost() ? h('button', { class: 'memo-btn', title: '내보내기', style: 'margin-left:6px', onclick: () => { if (confirm(`${x.name}님을 내보낼까요?`)) act('kick', { target: x.id }); } }, '✕') : null)))));
+}
+
 function renderLobby(main) {
   const link = `${location.origin}/?code=${st.code}`;
   main.append(h('div', { class: 'card' },
@@ -798,13 +829,18 @@ function renderLobby(main) {
   const grid = h('div', { class: 'grid' });
   for (const q of st.players) grid.append(playerCard(q, { kick: isHost() && q.id !== st.meId }));
   main.append(grid);
+  specList(main);
   const acts = h('div', { class: 'actions' });
-  if (isHost()) {
+  if (st.spectator) {
+    acts.append(h('button', { onclick: () => act('unspectate') }, '🎮 참가자로 돌아가기'));
+    acts.append(h('div', { class: 'hint' }, '👀 지금은 관전자예요. 관전자끼리만 대화할 수 있어요.'));
+  } else if (isHost()) {
     const enough = st.players.length >= st.minPlayers;
     acts.append(h('button', { class: 'ghost', onclick: () => act('addbot', { count: 1 }) }, '🤖 봇 추가'));
     acts.append(h('button', { class: 'ghost', onclick: () => act('addbot', { count: 5 }) }, '🤖 봇 5명 추가'));
     acts.append(h('button', { disabled: !enough, onclick: () => act('start') }, enough ? '▶ 게임 시작' : `${st.minPlayers}명이 모이면 시작할 수 있어요`));
   } else acts.append(h('div', { class: 'hint' }, '방장이 시작하길 기다리는 중…'));
+  if (!st.spectator) acts.append(h('button', { class: 'ghost', onclick: () => act('spectate') }, '👀 관전자로 이동'));
   acts.append(h('button', { class: 'ghost', onclick: () => { act('leave'); leaveLocal(); } }, '나가기'));
   main.append(acts);
 }

@@ -151,7 +151,7 @@ function createRoom(hostName) {
     code: newCode(), hostId: host.id, players: [host], settings: defaultSettings(),
     phase: 'lobby', day: 0, seq: 0, timer: null, endsAt: 0,
     night: null, votes: {}, voteActs: {}, touches: [], pendingWin: null,
-    chat: [], msgId: 0, winner: null, lastActive: Date.now(),
+    chat: [], msgId: 0, winner: null, lastActive: Date.now(), specs: [],
   };
   rooms.set(room.code, room);
   return { room, player: host };
@@ -162,6 +162,10 @@ function sse(res, event, data) {
   try { res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`); } catch (e) { /* 끊긴 연결 */ }
 }
 function sendToPlayer(p, event, data) { for (const res of p.conns) sse(res, event, data); }
+// 👀 관전자: room.players(게임 참가자)와 따로 room.specs 에 둔다. 게임 규칙 코드는 관전자를 전혀 모른다.
+const members = (room) => room.players.concat(room.specs || []);
+const canSee = (room, p, m) => (p.spec ? ['all', 'sys', 'spec'].includes(m.ch) : E.canSeeMsg(room, p, m));
+const MAX_SPECS = 30;
 const pubMsg = (m) => ({ id: m.id, ch: m.ch, name: m.anon ? '익명' + m.anon : m.name, text: m.text, t: m.t });
 
 function addChat(room, ch, text, from, to) {
@@ -170,12 +174,12 @@ function addChat(room, ch, text, from, to) {
   if (from && ch === 'all' && room.anonDay === room.day && ['day', 'vote', 'defense', 'confirm'].includes(room.phase) && from.anonN) m.anon = from.anonN; // 익명의 날
   room.chat.push(m);
   if (room.chat.length > 400) room.chat.shift();
-  for (const p of room.players) if (E.canSeeMsg(room, p, m)) sendToPlayer(p, 'chat', pubMsg(m));
+  for (const p of members(room)) if (canSee(room, p, m)) sendToPlayer(p, 'chat', pubMsg(m));
   if (from && !from.bot && !m.anon && ch === 'all' && (room.phase === 'day' || room.phase === 'vote' || room.phase === 'defense' || room.phase === 'confirm')) Bots.hear(room, { from: from.id, text });
   return m;
 }
 function sendBacklog(room, p) {
-  const list = room.chat.filter((m) => E.canSeeMsg(room, p, m)).slice(-200).map(pubMsg);
+  const list = room.chat.filter((m) => canSee(room, p, m)).slice(-200).map(pubMsg);
   sendToPlayer(p, 'backlog', list);
 }
 
@@ -196,7 +200,31 @@ U.io.sys = (room, text) => addChat(room, 'sys', text);
 U.io.priv = (room, p, text) => addChat(room, 'priv', text, null, p.id);
 U.io.kill = killPlayer;
 
+function specView(room, sp) {
+  const s = room.settings, inGame = room.phase !== 'lobby';
+  const players = room.players.map((q) => {
+    const o = { id: q.id, name: q.name, alive: q.alive, host: q.id === room.hostId, connected: q.bot || q.conns.size > 0, bot: !!q.bot };
+    if (inGame && q.role && (room.phase === 'ended' || (!q.alive && s.revealOnDeath))) o.role = q.role; // 관전자도 공개된 직업만 본다
+    return o;
+  });
+  const v = {
+    code: room.code, phase: room.phase, day: room.day, endsAt: room.endsAt, now: Date.now(), spectator: true,
+    hostId: room.hostId, meId: sp.id, players, specs: room.specs.map((x) => ({ id: x.id, name: x.name, connected: x.conns.size > 0, me: x.id === sp.id })),
+    settings: s, winner: room.winner, minPlayers: MIN_PLAYERS, maxPlayers: MAX_PLAYERS,
+  };
+  if (room.phase === 'ended') { v.replay = room.replay || []; v.titles = room.titles || []; }
+  if ((room.phase === 'defense' || room.phase === 'confirm') && room.defense) { const T = byId(room, room.defense.id); v.defense = { id: room.defense.id, name: T ? T.name : '' }; }
+  if (room.phase === 'vote') {
+    const tally = {}; let skip = 0;
+    for (const [vid, tg] of Object.entries(room.votes)) { const voter = byId(room, vid); if (!voter) continue; if (tg === 'skip') skip++; else tally[tg] = (tally[tg] || 0) + E.weight(voter); }
+    v.tally = tally; v.skip = skip; v.voted = Object.keys(room.votes).length;
+    v.eligible = alivePlayers(room).filter((x) => E.canVote(room, x)).length;
+  }
+  return v;
+}
+
 function viewFor(room, p) {
+  if (p.spec) return specView(room, p);
   const s = room.settings;
   const inGame = room.phase !== 'lobby';
   const players = room.players.map((q) => {
@@ -210,6 +238,7 @@ function viewFor(room, p) {
     code: room.code, phase: room.phase, day: room.day, endsAt: room.endsAt, now: Date.now(),
     hostId: room.hostId, meId: p.id, players, settings: s, winner: room.winner,
     minPlayers: MIN_PLAYERS, maxPlayers: MAX_PLAYERS,
+    specs: (room.specs || []).map((x) => ({ id: x.id, name: x.name, connected: x.conns.size > 0 })),
   };
   if (room.phase === 'ended') { v.replay = room.replay || []; v.titles = room.titles || []; }
   if (inGame) {
@@ -270,7 +299,7 @@ function scheduleBeg(room) {
 }
 
 function broadcastState(room) {
-  for (const p of room.players) if (p.conns.size) sendToPlayer(p, 'state', viewFor(room, p));
+  for (const p of members(room)) if (p.conns.size) sendToPlayer(p, 'state', viewFor(room, p));
 }
 
 // ---------------------------------------------------------------- 게임 진행
@@ -379,7 +408,7 @@ function startGame(room) {
   }
   addChat(room, 'sys', '🌙 1일차 밤이 되었습니다.');
   setPhase(room, 'night');
-  for (const p of room.players) sendBacklog(room, p);
+  for (const p of members(room)) sendBacklog(room, p);
 }
 
 function endGame(room, w) {
@@ -391,7 +420,7 @@ function endGame(room, w) {
   addChat(room, 'sys', `📋 직업 공개: ${list}`);
   if (room.settings.jokerReveal === 'end' && room.jokerBefore) addChat(room, 'sys', `📜 광대가 섞기 전의 원래 직업: ${room.jokerBefore}`);
   setPhase(room, 'ended');
-  for (const p of room.players) sendBacklog(room, p);
+  for (const p of members(room)) sendBacklog(room, p);
 }
 
 // 단계 넘기기에서 오류가 나면 기록만 하고, 게임이 멈추지 않도록 다음 단계로 강제 이동을 시도한다
@@ -485,14 +514,23 @@ function resetToLobby(room) {
     p.role = null; p.alive = true; p.s = {}; p.team = null; p.contacted = false; p.destroyed = false; p.exorcised = false; p.blessed = false; p.blessedBy = null; p.loaning = false; p.origRole = null; p.guess = null;
   }
   room.players = room.players.filter((p) => p.bot || p.conns.size > 0); // 접속이 끊긴 사람은 정리(봇은 유지)
+  room.specs = (room.specs || []).filter((x) => x.conns.size > 0);
   if (!byId(room, room.hostId)) { const h = room.players.find((x) => !x.bot); if (h) room.hostId = h.id; }
   addChat(room, 'sys', '🔄 새 게임을 준비합니다.');
-  for (const p of room.players) sendBacklog(room, p);
+  for (const p of members(room)) sendBacklog(room, p);
   broadcastState(room);
 }
 
 // ---------------------------------------------------------------- 접속 관리
+function removeSpec(room, sp) {
+  clearTimeout(sp.dcTimer);
+  room.specs = room.specs.filter((x) => x !== sp);
+  for (const res of sp.conns) { sse(res, 'kicked', {}); try { res.end(); } catch (e) { /* */ } }
+  sp.conns.clear();
+  broadcastState(room);
+}
 function removePlayer(room, p) {
+  if (p.spec) return removeSpec(room, p);
   clearTimeout(p.dcTimer);
   room.players = room.players.filter((x) => x !== p);
   for (const res of p.conns) { sse(res, 'kicked', {}); try { res.end(); } catch (e) { /* */ } }
@@ -505,6 +543,12 @@ function removePlayer(room, p) {
   broadcastState(room);
 }
 function onDisconnect(room, p) {
+  if (p.spec) { // 관전자는 연결이 1분 넘게 끊기면 정리
+    if (!room.specs.includes(p) || p.conns.size) return;
+    broadcastState(room); clearTimeout(p.dcTimer);
+    p.dcTimer = setTimeout(() => { if (rooms.has(room.code) && !p.conns.size && room.specs.includes(p)) removeSpec(room, p); }, 60000);
+    return;
+  }
   if (!room.players.includes(p)) return; // 이미 나간 사람
   broadcastState(room);
   if (p.conns.size) return;
@@ -523,8 +567,36 @@ function onDisconnect(room, p) {
 class Err extends Error {}
 const fail = (m) => { throw new Err(m); };
 
+function specAction(room, p, b) {
+  switch (b.type) {
+    case 'chat': {
+      const text = String(b.text || '').replace(/\s+/g, ' ').trim().slice(0, 200);
+      if (!text) return;
+      const now = Date.now();
+      if (now - p.lastChat < 250) fail('너무 빨리 보내고 있어요.');
+      p.lastChat = now;
+      addChat(room, 'spec', text, p);
+      return;
+    }
+    case 'unspectate': { // 대기실에서만 다시 참가자로
+      if (room.phase !== 'lobby') fail('게임이 시작되면 참가자로 바꿀 수 없어요.');
+      if (room.players.length >= MAX_PLAYERS) fail('방이 가득 찼어요.');
+      room.specs = room.specs.filter((x) => x !== p);
+      p.spec = false; p.alive = true;
+      room.players.push(p);
+      addChat(room, 'sys', `🎮 ${p.name}님이 참가자로 돌아왔어요.`);
+      for (const q of members(room)) sendBacklog(room, q);
+      broadcastState(room);
+      return;
+    }
+    case 'leave': removeSpec(room, p); return;
+    default: fail('관전자는 할 수 없어요.');
+  }
+}
+
 function handleAction(room, p, b) {
   room.lastActive = Date.now();
+  if (p.spec) return specAction(room, p, b);
   const isHost = room.hostId === p.id;
   switch (b.type) {
     case 'chat': {
@@ -557,6 +629,8 @@ function handleAction(room, p, b) {
     }
     case 'kick': {
       if (!isHost) fail('방장만 내보낼 수 있어요.');
+      const sp = room.specs.find((x) => x.id === b.target);
+      if (sp) { removeSpec(room, sp); return; } // 관전자는 언제든 내보낼 수 있다
       if (room.phase !== 'lobby') fail('게임 중에는 내보낼 수 없어요.');
       const t = byId(room, b.target);
       if (!t || t.id === p.id) fail('내보낼 수 없는 대상이에요.');
@@ -601,6 +675,22 @@ function handleAction(room, p, b) {
       resetToLobby(room);
       if (room.players.length < MIN_PLAYERS) return; // 인원이 모자라면 대기실에 머문다
       startGame(room);
+      return;
+    }
+    case 'spectate': { // 대기실에서 관전자로 옮기기
+      if (room.phase !== 'lobby') fail('게임이 시작되기 전에만 관전자로 바꿀 수 있어요.');
+      if (room.specs.length >= MAX_SPECS) fail('관전자가 가득 찼어요.');
+      if (isHost) {
+        const next = room.players.find((x) => x !== p && !x.bot && x.conns.size);
+        if (!next) fail('방장은 다른 참가자가 있어야 관전자가 될 수 있어요.');
+        room.hostId = next.id;
+      }
+      room.players = room.players.filter((x) => x !== p);
+      p.spec = true;
+      room.specs.push(p);
+      addChat(room, 'sys', `👀 ${p.name}님이 관전자로 옮겼어요.`);
+      for (const q of members(room)) sendBacklog(room, q);
+      broadcastState(room);
       return;
     }
     case 'leave': {
@@ -737,7 +827,7 @@ function cleanName(v) { return String(v || '').replace(/\s+/g, ' ').trim().slice
 function auth(code, token) {
   const room = rooms.get(String(code || '').toUpperCase());
   if (!room) return {};
-  const p = typeof token === 'string' && token.length === 32 ? room.players.find((x) => safeEq(x.token, token)) : null;
+  const p = typeof token === 'string' && token.length === 32 ? members(room).find((x) => safeEq(x.token, token)) : null;
   return { room, p };
 }
 
@@ -814,14 +904,16 @@ const server = http.createServer(async (req, res) => {
       if (!name) return json(res, 400, { error: '이름을 입력해 주세요.' });
       const room = rooms.get(String(b.code || '').trim().toUpperCase());
       if (!room) return json(res, 404, { error: '방을 찾을 수 없어요. 코드를 확인해 주세요.' });
-      if (room.phase !== 'lobby') return json(res, 400, { error: '이미 게임이 시작된 방이에요.' });
-      if (room.players.length >= MAX_PLAYERS) return json(res, 400, { error: '방이 가득 찼어요.' });
-      if (room.players.some((x) => x.name.toLowerCase() === name.toLowerCase())) return json(res, 400, { error: '같은 이름이 이미 있어요.' });
+      const asSpec = room.phase !== 'lobby' || b.spectate === true; // 이미 시작된 방은 관전자로 입장
+      if (!asSpec && room.players.length >= MAX_PLAYERS) return json(res, 400, { error: '방이 가득 찼어요.' });
+      if (asSpec && (room.specs || []).length >= MAX_SPECS) return json(res, 400, { error: '관전자가 가득 찼어요.' });
+      if (members(room).some((x) => x.name.toLowerCase() === name.toLowerCase())) return json(res, 400, { error: '같은 이름이 이미 있어요.' });
       const p = makePlayer(name);
-      room.players.push(p);
+      if (asSpec) { p.spec = true; room.specs.push(p); addChat(room, 'sys', `👀 ${name}님이 관전자로 들어왔어요.`); }
+      else room.players.push(p);
       room.lastActive = Date.now();
       broadcastState(room);
-      return json(res, 200, { code: room.code, token: p.token, id: p.id });
+      return json(res, 200, { code: room.code, token: p.token, id: p.id, spectator: !!p.spec });
     }
     if (req.method === 'POST' && url.pathname === '/api/action') {
       if (limited(ip, 'action')) return json(res, 429, { error: '너무 빨리 누르고 있어요.' });
