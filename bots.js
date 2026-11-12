@@ -288,6 +288,7 @@ function pickNight(room, p, opt, mode) {
       if (role === 'doppelganger') return (best(pool.length ? pool : cands, (c) => trust(c), N) || {}).id;
       return (best(pool.length ? pool : cands, (c) => killValue(room, p, c), N * 2) || {}).id;
     }
+    case 'witness': case 'executor': return (best(cands, (c) => S(c), N) || {}).id;
     case 'assassin': { const pool = cands.filter((c) => !knownMate(p, c)); return (best(pool.length ? pool : cands, (c) => killValue(room, p, c), N * 2) || {}).id; }
     case 'destroyer': return (best(cands, (c) => (claimedRole(room, c.id, 'police') ? 150 : 0) + (claimedRole(room, c.id, 'doctor') ? 80 : 0) + trust(c) * 0.15, N * 2) || {}).id;
     case 'medium': return (best(cands, (c) => (A.dead[c.id] && A.dead[c.id].phase === 'vote' ? 30 : 0) + (b.known[c.id] ? -100 : 0), N * 2) || {}).id;
@@ -300,7 +301,7 @@ function pickNight(room, p, opt, mode) {
     }
     case 'angel': // 사제: 위협적인 진짜(처럼 보이는) 경찰·의사, 아니면 자신
       return (best(cands, (c) => (claimedRole(room, c.id, 'police') ? cred(room, p, c.id, 'police') * 160 : 0) + (claimedRole(room, c.id, 'doctor') ? 60 : 0) + (c.id === p.id ? 30 : 0) + trust(c) * 0.12, N) || {}).id;
-    case 'forger': case 'agitator': { // 접선 전: 마피아를 찾는 탐색 (이미 확인한 사람은 제외)
+    case 'forger': case 'agitator': case 'poisoner': { // 접선 전: 마피아를 찾는 탐색 (이미 확인한 사람은 제외)
       const pool = cands.filter((c) => !b.checks[c.id] && !knownMate(p, c));
       const pick = rnd(pool.length ? pool : cands);
       if (pick && !b.checks[pick.id]) b.checks[pick.id] = 'tried';
@@ -666,9 +667,12 @@ function botConfirm(room, p) {
   sync(room, p);
   const L = lv(room, p);
   let yes;
-  if (mafiaSide(p) && knownMate(p, T)) yes = chance(L.mistake);
+  if (p.role === 'prosecutor') yes = chance(0.85); // 검사는 찬성, 변호사는 반대 쪽
+  else if (p.role === 'lawyer') yes = chance(0.15);
+  else if (mafiaSide(p) && knownMate(p, T)) yes = chance(L.mistake);
   else if (room.votes[p.id] === T.id) yes = chance(0.92);
   else { const W = L.wise || 0; const sc = W >= 0.7 ? 0.6 * sus(room, p, T, { noSocial: true }) + 0.4 * sus(room, p, T) : sus(room, p, T); yes = chance(Math.max(0.12, Math.min(0.93, 0.58 + sc / 120))); }
+  if (p.role === 'judge' && !p.s.judgeUsed && chance(0.55)) { act(room, p, { type: 'judge', verdict: yes ? 'yes' : 'no' }); return; } // 판사: 가끔 직접 판결
   act(room, p, { type: 'confirm', choice: yes ? 'yes' : 'no' });
 }
 function botVote(room, p) {
@@ -736,7 +740,7 @@ function schedule(room) {
     }
     return;
   }
-  const sec = phase === 'night' ? room.settings.nightSec : phase === 'day' ? room.settings.daySec : phase === 'defense' ? room.settings.defenseSec : phase === 'confirm' ? (Number(process.env.NME_CONFIRM_SEC) || 12) : room.settings.voteSec;
+  const sec = phase === 'night' ? room.settings.nightSec : phase === 'day' ? room.settings.daySec : phase === 'defense' || phase === 'speak' ? room.settings.defenseSec : phase === 'rps' ? (Number(process.env.NME_RPS_SEC) || 7) : phase === 'confirm' ? (Number(process.env.NME_CONFIRM_SEC) || 12) : room.settings.voteSec;
   for (const p of room.players) {
     if (!p.bot || !p.alive) continue;
     const L = lv(room, p);
@@ -757,6 +761,8 @@ function schedule(room) {
       });
     } else if (phase === 'vote') at(0.2, 0.85, () => botVote(room, p));
     else if (phase === 'defense') { if (room.defense && room.defense.id === p.id) at(0.1, 0.4, () => botDefense(room, p)); }
+    else if (phase === 'speak') { if (room.speaker === p.id) at(0.1, 0.4, () => say(room, p, p.role === 'prosecutor' ? rnd(['이 사람은 정말 수상해요. 처형에 찬성해 주세요.', '지금까지의 행동을 보면 마피아일 가능성이 높아요. 찬성해 주세요.']) : rnd(['성급한 처형은 위험해요. 반대에 투표해 주세요.', '확실한 증거가 없어요. 이번에는 반대해 주세요.']))); }
+    else if (phase === 'rps') { if ((room.rps && room.rps.matches || []).some((m) => m.b === p.id || m.t === p.id)) at(0.1, 0.7, () => act(room, p, { type: 'rps', sign: rnd(['r', 'p', 's']) })); }
     else if (phase === 'confirm') at(0.15, 0.75, () => botConfirm(room, p));
   }
 }

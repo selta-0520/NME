@@ -35,6 +35,10 @@ function nightOptions(room, p, modeOverride) {
     case 'ninja': return o('🥷 상호작용을 바꿀 사람', others);
     case 'detective': return o('🕵 비교할 첫 번째 사람 (밤)', A);
     case 'inspector': return o('🔎 직업 후보를 볼 사람', others);
+    case 'witness': return o('👁 공격받았는지 살필 사람', others);
+    case 'executor': return o('📜 유언을 들을 사람 (그 사람이 오늘 밤 죽으면)', others);
+    case 'poisoner': return p.contacted ? o('🧪 독을 걸 사람 (다음 밤에 죽어요)', others.filter((x) => !U.inMafiaChat(x))) : o('🤝 마피아인지 확인할 사람 (마피아면 접선)', others);
+    case 'bettor': return o('✊ 가위바위보를 할 사람', others.filter((x) => !(p.s.beaten || []).includes(x.id)));
     case 'bodyguard': return o('🛡 지킬 사람', others);
     case 'destroyer': {
       const left = U.destroyLimit(room) - (p.s.destroyUsed || 0);
@@ -114,9 +118,17 @@ function voteBlockReason(room, p) {
 }
 
 // ------------------------------------------------------------ 채팅
-// 반환: { ch: 'all'|'mafia'|'couple'|'dead'|null, label }
+// 유언집행자와 죽은 사람의 짧은 단둘이 대화 (낮이 시작되고 약 10초)
+function activeWill(room, p) {
+  if (room.phase !== 'day') return null;
+  const now = Date.now();
+  return (room.willChats || []).find((w) => w.until > now && (w.a === p.id || w.b === p.id)) || null;
+}
+// 반환: { ch: 'all'|'mafia'|'couple'|'dead'|'will'|null, label, to? }
 function chatInfo(room, p) {
   if (room.phase === 'lobby' || room.phase === 'ended') return { ch: 'all', label: '전체 대화' };
+  const wl = activeWill(room, p);
+  if (wl) return { ch: 'will', to: wl.a === p.id ? wl.b : wl.a, label: '📜 유언 대화 — 단둘이 이야기할 수 있어요' };
   if (!p.alive) {
     if (p.exorcised) return { ch: null, label: '🕊 성불되어 말할 수 없어요' };
     return { ch: 'dead', label: '👻 죽은 사람끼리 보이는 대화' };
@@ -128,7 +140,11 @@ function chatInfo(room, p) {
     if (p.role === 'medium') return { ch: 'dead', label: '🔮 죽은 사람과 대화 (밤)' };
     return { ch: null, label: '🌙 밤에는 말할 수 없어요' };
   }
+  if (room.phase === 'rps') return { ch: null, label: '✊ 가위바위보 대결 중이에요' };
   if (p.s.silenceDay === room.day) return { ch: null, label: '😨 겁을 먹어 말할 수 없어요' };
+  if (room.phase === 'speak') { // 검사·변호사의 추가 발언 시간
+    return room.speaker === p.id ? { ch: 'all', label: `⚔️ 지금은 ${U.roleName(p.role)}의 발언 시간이에요 — 하고 싶은 말을 하세요` } : { ch: null, label: '⚔️ 검사·변호사의 발언을 듣는 중이에요' };
+  }
   if (room.phase === 'defense' && room.defense) { // 최후의 반론: 처형 후보만 말할 수 있다
     return room.defense.id === p.id ? { ch: 'all', label: '🛡 최후의 반론 — 마지막으로 하고 싶은 말을 하세요' } : { ch: null, label: '🛡 최후의 반론을 듣는 중이에요' };
   }
@@ -140,6 +156,7 @@ function canSeeMsg(room, p, m) {
   switch (m.ch) {
     case 'all': case 'sys': return true;
     case 'priv': return m.to === p.id;
+    case 'will': return m.from === p.id || m.to === p.id;
     case 'mafia': return room.phase === 'ended' || U.inMafiaChat(p);
     case 'couple': return room.phase === 'ended' || p.role === 'couple';
     case 'dead': return room.phase === 'ended' || !p.alive || (p.alive && p.role === 'medium' && !!m.night);
@@ -212,6 +229,13 @@ function infoLines(room, p) {
     case 'beggar': L.push(p.s.met ? '🎉 부자를 만났어요! 12~17초마다 채팅해야 해요. (안 하면 "한푼 줍쇼"가 자동 전송) 2일 뒤 둘 다 살아있으면 우승!' : '🙏 모든 직업을 알지만 말하거나 투표할 수 없어요.'); break;
     case 'rich': L.push(p.s.meetDay != null ? '🎉 거지를 만났어요! 둘 다 살아있으면 곧 우승해요.' : '💰 거지를 찾아 보세요.'); break;
     case 'revolutionary': L.push(p.s.joined ? `✊ ${p.team === 'mafia' ? '마피아' : '시민'} 팀이 되었어요.` : '✊ 4일차 낮까지 아무도 나에게 능력을 쓰지 않으면 우승해요.'); break;
+    case 'judge': L.push(p.s.judgeUsed ? '⚖️ 판결을 이미 내렸어요.' : '⚖️ 찬반투표 시간에 처형의 찬성/반대를 직접 결정할 수 있어요. (1회)'); break;
+    case 'prosecutor': { const m = other('lawyer'); L.push(`⚔️ 최후의 반론 뒤 추가 발언을 먼저 하고, 찬반투표에서 찬성이 2표예요.${m ? ` 변호사: ${m.name}${m.alive ? '' : ' (사망)'}` : ''}`); break; }
+    case 'lawyer': { const m = other('prosecutor'); L.push(`⚖ 최후의 반론 뒤 검사 다음으로 추가 발언을 하고, 찬반투표에서 반대가 2표예요.${m ? ` 검사: ${m.name}${m.alive ? '' : ' (사망)'}` : ''}`); break; }
+    case 'witness': L.push('👁 밤마다 1명을 살펴서 그 사람이 공격받았다면 공격자 후보 3명을 알 수 있어요.'); break;
+    case 'executor': L.push('📜 지목한 사람이 밤에 죽으면 직업을 알고, 아침에 10초 동안 단둘이 대화할 수 있어요.'); break;
+    case 'poisoner': L.push(p.contacted ? '🧪 밤마다 1명에게 독을 걸어요. 중독된 사람은 다음 밤에 죽고, 그 밤에 치료받으면 살아나요.' : '🤝 밤에 마피아를 찾아 접선하세요. 접선하면 독을 걸 수 있어요.'); break;
+    case 'bettor': { const need = U.bettorNeed(room); const won = (p.s.beaten || []).map((i) => U.byId(room, i)).filter(Boolean); L.push(`✊ 가위바위보 승리 ${(p.s.beaten || []).length}/${need}명${won.length ? ` (이긴 사람: ${U.names(won)})` : ''} — 이미 이긴 사람에게는 다시 도전할 수 없어요.`); break; }
     case 'madam': L.push('💋 투표할 때 선택한 사람이 유혹당해요. (마피아를 고르면 접선)'); break;
     case 'doppelganger': if (p.s.disguise) L.push(`🎭 지금 "${U.roleName(p.s.disguise)}"(으)로 보여요.`); break;
     case 'mafia': case 'spy': case 'ghost': case 'informant': break;
@@ -220,4 +244,4 @@ function infoLines(room, p) {
   return L;
 }
 
-module.exports = { nightOptions, voteOptions, boomOptions, canVote, voteBlockReason, chatInfo, canSeeMsg, knowsRole, shownRoleTo, infoLines };
+module.exports = { activeWill, nightOptions, voteOptions, boomOptions, canVote, voteBlockReason, chatInfo, canSeeMsg, knowsRole, shownRoleTo, infoLines };

@@ -116,6 +116,8 @@ function resolveNight(room) {
   const guard = {};          // 보호받는 사람 id -> 경호원
   const nightDeadIds = new Set();
   const guardNotes = [];     // 경호원이 지키던 사람이 공격받아 죽은 기록
+  const witnesses = [], executors = [], attacked = {}; // 목격자·유언집행자의 대상, 공격받은 사람 id -> 공격자
+  room.wills = [];
 
   // ---- 0. 훔친 능력을 쓰는 도둑은 이번 밤 동안 그 직업으로 처리한다 (끝나면 되돌림)
   const swapped = [];
@@ -190,6 +192,20 @@ function resolveNight(room) {
         }
         const list = U.shuffle([real, ...fakes]);
         priv(p, `🔎 ${t.name}님의 직업 후보: ${list.map((k) => ROLE[k].name).join(' / ')} (이 중 하나가 진짜예요)`);
+        U.touch(room, p, t); break;
+      }
+      case 'witness': witnesses.push({ p, t }); U.touch(room, p, t); break;
+      case 'executor': executors.push({ p, t }); U.touch(room, p, t); break;
+      case 'bettor': U.touch(room, p, t); break; // 가위바위보는 밤이 끝날 때 따로 진행
+      case 'poisoner': {
+        if (!p.contacted) { // 마피아를 찾으면 접선
+          U.touch(room, p, t);
+          if (U.isMafiaKnown(t)) U.contact(room, p, t); else priv(p, `🤝 ${t.name}님은 마피아가 아니었습니다.`);
+          break;
+        }
+        t.s.poison = { day, by: p.id };
+        priv(p, `🧪 ${t.name}님에게 독을 걸었습니다. 다음 밤에 죽어요. (그 밤에 치료받으면 살아나요)`);
+        priv(t, '🧪 몸이 이상합니다… 독에 중독된 것 같아요! 다음 밤까지 치료받지 못하면 죽습니다.');
         U.touch(room, p, t); break;
       }
       case 'police':
@@ -284,8 +300,17 @@ function resolveNight(room) {
     U.touch(room, p, t);
   }
 
+  // 독: 지난 밤에 중독된 사람은 이번 밤에 죽는다 (치료받으면 살아남는다)
+  const poisoned = [];
+  for (const t of U.alive(room)) {
+    const po = t.s.poison;
+    if (!po || po.day >= day) continue;
+    poisoned.push(t); t.s.poison = null;
+    attacks.push({ kind: 'poison', by: U.byId(room, po.by) || null, t });
+  }
+
   // ---- 6. 공격 처리 (파괴 → 물약 → 미치광이 → 마피아 순서)
-  const order = { destroy: 0, potion: 1, madman: 2, mafia: 3, assassin: 4 };
+  const order = { destroy: 0, potion: 1, madman: 2, poison: 2.5, mafia: 3, assassin: 4 };
   attacks.sort((a, b) => order[a.kind] - order[b.kind]);
   const kill = (victim, how, by, kind) => {
     victim.alive = false; nightDeadIds.add(victim.id);
@@ -297,14 +322,15 @@ function resolveNight(room) {
       deaths.push({ p: by, how: '테러리스트의 자폭에 휘말려 사망했습니다.' });
     }
   };
-  const HOW = { mafia: '마피아에게 살해당했습니다.', potion: '정체불명의 공격으로 사망했습니다.', madman: '정체불명의 공격으로 사망했습니다.', destroy: '파괴당했습니다. (마피아의 공격이 아닙니다)', assassin: '정체불명의 공격으로 사망했습니다.' };
+  const HOW = { mafia: '마피아에게 살해당했습니다.', potion: '정체불명의 공격으로 사망했습니다.', madman: '정체불명의 공격으로 사망했습니다.', destroy: '파괴당했습니다. (마피아의 공격이 아닙니다)', assassin: '정체불명의 공격으로 사망했습니다.', poison: '독에 중독되어 사망했습니다.' };
   let mafiaFailMsg = null;
   for (const at of attacks) {
     let t = at.t;
+    if (at.by && !attacked[t.id]) attacked[t.id] = at.by; // 목격자용: 공격받은 사람 기록
     if (!t.alive) continue;
     if (at.kind === 'mafia' && t.role === 'couple') {
       const partner = U.alive(room).find((x) => x !== t && x.role === 'couple');
-      if (partner) t = partner;
+      if (partner) { t = partner; if (at.by && !attacked[t.id]) attacked[t.id] = at.by; }
     }
     let fail = null;
     if (at.kind !== 'destroy') {
@@ -325,6 +351,22 @@ function resolveNight(room) {
     const g = guard[t.id] || guard[at.t.id];
     kill(t, HOW[at.kind], at.by, at.kind);
     if (g && at.by) guardNotes.push({ g, victim: t, by: at.by });
+  }
+
+  for (const t of poisoned) if (t.alive) priv(t, '💊 치료를 받아 독이 사라졌습니다. 살아났어요!');
+  // 목격자: 지목한 사람이 공격받았는지, 공격자 후보 3명
+  for (const { p, t } of witnesses) {
+    const by = attacked[t.id];
+    if (!by) { priv(p, `👁 ${t.name}님은 지난밤 공격받지 않았습니다.`); continue; }
+    const pool = room.players.filter((x) => x !== t && x !== p && x !== by && (x.alive || nightDeadIds.has(x.id)));
+    const list = U.shuffle([by, ...U.shuffle(pool).slice(0, 2)]);
+    priv(p, `👁 ${t.name}님이 지난밤 공격받았습니다! 공격자 후보: ${U.names(list)} (이 중 한 명이 진짜예요)`);
+  }
+  // 유언집행자: 지목한 사람이 밤에 죽었다면 직업을 알고, 아침에 잠깐 대화할 수 있다
+  for (const { p, t } of executors) {
+    if (!p.alive || t.alive || !nightDeadIds.has(t.id)) continue;
+    priv(p, `📜 ${t.name}님이 지난밤 죽었습니다. 직업은 "${U.roleName(t.role)}"이었어요. 아침에 잠시 단둘이 대화할 수 있어요.`);
+    room.wills.push({ a: p.id, b: t.id });
   }
 
   // ---- 7. 사망 후속 처리
@@ -426,6 +468,11 @@ function resolveNight(room) {
     }
   }
   if (gamblerWin && !room.pendingWin) room.pendingWin = gamblerWin;
+  if (!room.pendingWin) { // 내기꾼: 필요한 인원에게 가위바위보로 이겼고 아직 살아있다면 우승
+    const need = U.bettorNeed(room);
+    const bw = U.alive(room).find((x) => x.role === 'bettor' && (x.s.beaten || []).length >= need);
+    if (bw) room.pendingWin = { kind: 'solo', ids: [bw.id], text: `✊ 내기꾼 ${bw.name}님이 ${need}명에게 가위바위보로 이겨 혼자 우승했습니다!` };
+  }
   room.night = null;
 }
 

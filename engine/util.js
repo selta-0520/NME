@@ -90,6 +90,9 @@ U.survive = (room, p) => {
 // 파괴자가 한 판에 쓸 수 있는 횟수: 게임 시작 인원의 3분의 1 (내림, 최소 1번)
 U.destroyLimit = (room) => Math.max(1, Math.floor((room.startN || room.players.length) / 3));
 
+// 내기꾼이 우승하려면 가위바위보로 이겨야 하는 사람 수: 게임 시작 인원의 3분의 1 (올림, 최소 1명)
+U.bettorNeed = (room) => Math.max(1, Math.ceil((room.startN || room.players.length) / 3));
+
 // 도둑: 훔친 능력으로 잠시 바꿔서 실행한다 (역할·상태를 임시로 바꿨다가 되돌림)
 U.withLoan = (p, fn) => {
   const r = p.role, s = p.s;

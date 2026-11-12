@@ -4,6 +4,7 @@ const U = require('./util');
 const AB = require('./abilities');
 const { assignRoles } = require('./assign');
 const { startNight, resolveNight } = require('./night');
+const RPS = require('./rps');
 const { resolveVote, resolveBoom, checkWin, weight, prophetCheck, tallyVote, announceTally, confirmTally, confirmVoters } = require('./vote');
 
 // 밤 능력 선택 저장
@@ -52,6 +53,11 @@ function meView(room, p) {
       me.predict = { open: room.phase === 'night' && room.day === 1, ids: room.players.filter((x) => x !== p).map((x) => x.id), guesses: p.guess || {} };
     }
   }
+  if (room.phase === 'confirm' && p.alive && p.role === 'judge' && !p.s.judgeUsed && !room.judgeVerdict && room.defense && room.defense.id !== p.id) me.judge = { open: true };
+  if (room.phase === 'rps') {
+    const m = RPS.matchOf(room, p);
+    if (m) { const mine = m.b === p.id; const opp = U.byId(room, mine ? m.t : m.b); me.rps = { side: mine ? 'bettor' : 'target', opp: opp ? opp.name : '', pick: (mine ? m.bm : m.tm) || null }; }
+  }
   if (room.phase === 'night' && room.night && p.alive && U.canAttackAsMafia(room, p)) {
     me.mafiaPicks = {};
     for (const [pid, a] of Object.entries(room.night.acts)) {
@@ -63,7 +69,7 @@ function meView(room, p) {
 }
 
 module.exports = {
-  U, AB, assignRoles, startNight, resolveNight, resolveVote, resolveBoom, checkWin, weight, prophetCheck, tallyVote, announceTally, confirmTally, confirmVoters, setNightAct, setVoteAct, meView,
+  U, AB, assignRoles, startNight, resolveNight, resolveVote, resolveBoom, checkWin, weight, prophetCheck, tallyVote, announceTally, confirmTally, confirmVoters, setNightAct, setVoteAct, meView, rpsMatches: RPS.rpsMatches, rpsPick: RPS.rpsPick, rpsDone: RPS.rpsDone, rpsResolve: RPS.rpsResolve,
   chatInfo: AB.chatInfo, canSeeMsg: AB.canSeeMsg, knowsRole: AB.knowsRole, shownRoleTo: AB.shownRoleTo,
   canVote: AB.canVote, voteBlockReason: AB.voteBlockReason, GameError: U.GameError,
 };
