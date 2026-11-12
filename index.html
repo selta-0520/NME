@@ -302,7 +302,7 @@ function connect() {
   es = new EventSource(`/api/events?code=${sess.code}&token=${sess.token}`);
   es.addEventListener('state', (e) => { st = JSON.parse(e.data); offset = st.now - Date.now(); render(); });
   es.addEventListener('chat', (e) => addMsg(JSON.parse(e.data), true));
-  es.addEventListener('backlog', (e) => { $('#msgs').innerHTML = ''; JSON.parse(e.data).forEach(addMsg); });
+  es.addEventListener('backlog', (e) => { $('#msgs').innerHTML = ''; JSON.parse(e.data).forEach((m) => addMsg(m, false)); });
   es.addEventListener('kicked', () => leaveLocal('방에서 나왔어요.'));
   es.onerror = () => {
     if (!sess) return;
