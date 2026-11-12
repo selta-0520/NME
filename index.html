@@ -154,6 +154,17 @@
     </div>
   </div>
   <div class="card">
+    <details><summary style="cursor:pointer;color:var(--dim);font-size:13px">🔰 처음이세요? 30초 설명</summary>
+      <div style="margin-top:8px;font-size:14px;line-height:1.6">
+        <div><b>🎯 목표</b> — 사람마다 비밀 직업이 있고 크게 시민 팀·마피아 팀·중립이 있어요. 시민 팀은 마피아를 모두 찾아내고, 마피아 팀은 시민을 줄여서 이겨요. 중립은 직업마다 자기 조건이 있어요.</div>
+        <div><b>🌙 밤</b> — 직업 능력을 써요. (마피아는 한 명을 죽여요) 능력이 없는 직업은 기다리면 돼요.</div>
+        <div><b>☀️ 낮</b> — 아침에 누가 죽었는지 확인하고 대화로 마피아를 추리해요.</div>
+        <div><b>🗳 투표</b> — 가장 의심되는 사람에게 투표해요. 많이 받은 사람은 최후의 반론을 하고 찬반투표로 처형 여부가 정해져요.</div>
+        <div style="color:var(--dim)">게임 중에는 위쪽 📖 설명서에서 모든 직업을 볼 수 있어요. 처음엔 봇과 한 판 해 보는 걸 추천해요!</div>
+      </div>
+    </details>
+  </div>
+  <div class="card">
     <div class="row" style="align-items:center;justify-content:space-between"><span style="color:var(--dim);font-size:13px">🌐 공개방 (누구나 들어갈 수 있어요)</span><button id="pubRefresh" class="ghost" style="padding:6px 10px;font-size:12px">새로고침</button></div>
     <div class="chips" id="pubList"><span class="hint">불러오는 중…</span></div>
   </div>
@@ -285,12 +296,61 @@ function toggleFilter() {
 }
 function syncFilterBtn() { const b = $('#filterBtn'); if (b) b.textContent = filterOn() ? '🤬 욕설 가림: 켜짐' : '🤬 욕설 가림: 꺼짐'; }
 
+// ---- 🚫 개인 차단 / 🚨 신고 (채팅에서 이름을 누르면 나와요)
+let blocked = new Set();
+function blockKey() { return 'nme_block_' + (sess ? sess.code : ''); }
+function loadBlocked() { try { blocked = new Set(JSON.parse(localStorage.getItem(blockKey()) || '[]')); } catch (e) { blocked = new Set(); } syncBlockBtn(); }
+function saveBlocked() { try { localStorage.setItem(blockKey(), JSON.stringify([...blocked])); } catch (e) { /* */ } syncBlockBtn(); }
+function rebuildChat() { const box = $('#msgs'); box.innerHTML = ''; const log = msgLog; msgLog = []; log.forEach((m) => addMsg(m, false)); }
+function syncBlockBtn() { const b = $('#blockBtn'); if (!b) return; b.hidden = !blocked.size; b.textContent = `🚫 차단 중 ${blocked.size}명`; }
+function openUserMenu(name) {
+  if (!st || name === (st.players.concat(st.specs || []).find((x) => x.id === st.meId) || {}).name) return;
+  const mem = st.players.concat(st.specs || []).find((x) => x.name === name);
+  const sheet = $('#sheet'); sheet.innerHTML = '';
+  const isB = blocked.has(name);
+  sheet.append(
+    h('div', { class: 'row' }, h('h2', { class: 'grow' }, censor(name)), h('button', { class: 'ghost', onclick: closeModal }, '닫기')),
+    h('button', { onclick: () => { if (isB) blocked.delete(name); else blocked.add(name); saveBlocked(); rebuildChat(); closeModal(); toast(isB ? '차단을 풀었어요.' : '차단했어요. 이 사람의 대화가 내 화면에서 안 보여요.'); } }, isB ? '🔓 차단 해제' : '🚫 이 사람 차단 (내 화면에서만)'),
+    mem && !mem.bot ? h('button', { class: 'ghost', style: 'margin-top:8px', onclick: () => { if (confirm(`${name}님을 신고할까요?\n여러 명이 신고하면 잠시 말을 못 하게 되고, 방장에게 알려져요.`)) { act('report', { target: mem.id }).then(() => toast('신고가 접수되었어요.')); closeModal(); } } }, '🚨 신고하기') : null,
+    h('div', { class: 'note', style: 'margin-top:8px' }, '차단은 나에게만 적용돼요. 신고는 장난으로 하지 마세요.'));
+  settingsOpen = false; $('#modal').hidden = false;
+}
+function openBlockList() {
+  const sheet = $('#sheet'); sheet.innerHTML = '';
+  sheet.append(h('div', { class: 'row' }, h('h2', { class: 'grow' }, '🚫 차단 목록'), h('button', { class: 'ghost', onclick: closeModal }, '닫기')));
+  for (const n of blocked) sheet.append(h('div', { class: 'row', style: 'align-items:center;margin-top:6px' }, h('span', { class: 'grow' }, censor(n)),
+    h('button', { class: 'ghost', onclick: () => { blocked.delete(n); saveBlocked(); rebuildChat(); openBlockList(); if (!blocked.size) closeModal(); } }, '해제')));
+  settingsOpen = false; $('#modal').hidden = false;
+}
+
+// ---- 🔰 첫 판 안내
+let tourShown = false;
+function maybeTour() {
+  if (tourShown || !st || st.spectator || st.phase === 'lobby' || st.phase === 'ended' || !st.me || !st.me.role) return;
+  let seen = false; try { seen = localStorage.getItem('nme_tour') === '1'; } catch (e) { /* */ }
+  tourShown = true; if (seen) return;
+  const r = ROLE[st.me.role];
+  const sheet = $('#sheet'); sheet.innerHTML = '';
+  const step = (a, b) => h('div', { class: 'note', style: 'margin-top:6px' }, h('b', null, a + ' '), b);
+  sheet.append(
+    h('h2', null, '🔰 첫 판이시군요!'),
+    h('div', { class: 'card role-card ' + r.team }, h('div', null, h('span', { class: 'rname' }, r.name), h('span', { class: 'rteam ptag ' + r.team }, teamName(st.me.team))), h('div', { class: 'rdesc' }, r.desc)),
+    step('1.', '위의 내 직업 카드와 설명을 먼저 읽어 보세요. 팀마다 이기는 조건이 달라요.'),
+    step('2.', '🌙 밤에는 능력이 있으면 화면의 버튼으로 사람을 골라요. 능력이 없으면 기다리면 돼요.'),
+    step('3.', '☀️ 낮에는 채팅으로 의심되는 사람과 이유를 이야기해요. 아래 "빠른 반응" 버튼을 써도 돼요.'),
+    step('4.', '🗳 투표에서 사람을 고르면 끝이에요. 모르겠으면 기권도 괜찮아요.'),
+    step('💡', '직업이 헷갈리면 위쪽 📖 설명서의 "직업 도감"을 보세요. 사람 이름을 누르면 📝 직업 메모를 남길 수 있어요.'),
+    h('button', { style: 'margin-top:12px', onclick: () => { try { localStorage.setItem('nme_tour', '1'); } catch (e) { /* */ } closeModal(); } }, '알겠어요, 시작할게요'));
+  settingsOpen = false; $('#modal').hidden = false;
+}
+
 // ---- 💬 빠른 반응
 const QUICK = ['🤔 수상해요', '👍 동의해요', '🙋 저는 시민이에요', '🕊 신중하게 투표해요', '🔍 근거가 뭐죠?', '😅 잘 모르겠어요'];
 {
   const q = $('#quick');
   for (const text of QUICK) q.append(h('button', { type: 'button', onclick: () => act('chat', { text }) }, text));
   q.append(h('button', { type: 'button', id: 'filterBtn', class: 'ghost', onclick: toggleFilter }, ''));
+  q.append(h('button', { type: 'button', id: 'blockBtn', class: 'ghost', hidden: true, onclick: openBlockList }, ''));
   syncFilterBtn();
 }
 
@@ -317,6 +377,7 @@ $('#nameInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') ($('
 /* ------------------------------------------------ 연결 */
 function connect() {
   if (es) es.close();
+  loadBlocked();
   $('#msgs').innerHTML = '';
   es = new EventSource(`/api/events?code=${sess.code}&token=${sess.token}`);
   es.addEventListener('state', (e) => { st = JSON.parse(e.data); offset = st.now - Date.now(); render(); });
@@ -359,10 +420,11 @@ function addMsg(m, live) {
   msgLog.push(m); if (msgLog.length > 250) msgLog.shift();
   const box = $('#msgs');
   const near = box.scrollHeight - box.scrollTop - box.clientHeight < 60;
+  if (m.ch !== 'sys' && m.ch !== 'priv' && m.name && blocked.has(m.name)) return; // 차단한 사람의 말은 숨김
   const bk = bigKind(m);
   const row = h('div', { class: 'm ' + m.ch + (bk ? ' big k-' + bk.k : '') });
   if (bk && live && bk.banner) bigNote(censor(m.text), bk.k);
-  if (m.name) row.append(h('b', null, censor(m.name) + (m.ch === 'mafia' ? ' 🔪' : m.ch === 'dead' ? ' 👻' : m.ch === 'spec' ? ' 👀' : m.ch === 'couple' ? ' 💕' : '') + ':'));
+  if (m.name) row.append(h('b', { style: m.ch !== 'sys' && m.ch !== 'priv' && !/^익명\d+$/.test(m.name) ? 'cursor:pointer' : '', onclick: m.ch !== 'sys' && m.ch !== 'priv' && !/^익명\d+$/.test(m.name) ? () => openUserMenu(m.name) : null }, censor(m.name) + (m.ch === 'mafia' ? ' 🔪' : m.ch === 'dead' ? ' 👻' : m.ch === 'spec' ? ' 👀' : m.ch === 'couple' ? ' 💕' : '') + ':'));
   row.append(censor(m.text));
   box.append(row);
   while (box.children.length > 250) box.firstChild.remove();
@@ -490,10 +552,11 @@ function render() {
   Music.setScene(st.phase);
   recordStats();
   renderTop(); renderMain();
+  maybeTour();
   const ci = chatInfo();
   $('#chatlabel').textContent = ci.label;
   $('#chatinput').disabled = !ci.can; $('#chatsend').disabled = !ci.can;
-  for (const b of $('#quick').children) if (b.id !== 'filterBtn') b.disabled = !ci.can;
+  for (const b of $('#quick').children) if (b.id !== 'filterBtn' && b.id !== 'blockBtn') b.disabled = !ci.can;
   $('#chatinput').placeholder = ci.can ? '메시지 입력' : '말할 수 없는 시간이에요';
   if (settingsOpen) syncSettings();
 }

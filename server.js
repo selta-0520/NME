@@ -386,7 +386,7 @@ function setPhase(room, phase) {
 function startGame(room) {
   Bots.reset(room);
   clearBeg(room); room.lastBoom = null; room.lastPick = null;
-  room.jokerBefore = null; room.replay = []; room.titles = []; room.eventToday = null; room.anonDay = 0;
+  room.jokerBefore = null; room.reports = {}; room.replay = []; room.titles = []; room.eventToday = null; room.anonDay = 0;
   for (const x of room.players) x.chats = 0;
   const skipped = E.assignRoles(room);
   room.quiet = 0;
@@ -582,11 +582,34 @@ function cleanChat(p, raw) {
     if (f.rep >= 4) { f.mute = now + 10000; f.rep = 0; fail('도배 방지: 같은 말을 계속 보내서 10초 동안 말할 수 없어요.'); }
     if (f.rep >= 2) fail('같은 말을 반복해서 보낼 수 없어요.');
   } else f.rep = 0;
-  f.last = text; f.lastAt = now; f.times.push(now);
+  f.last = text; f.lastAt = now; f.times.push(now); p.lastText = text;
   return text;
 }
 
+// 🚨 신고: 여러 명에게 신고되면 잠시 말하지 못하게 하고, 방장에게 알려 준다
+function reportAction(room, p, b) {
+  const t = members(room).find((x) => x.id === b.target);
+  if (!t || t === p || t.bot) fail('신고할 수 없는 대상이에요.');
+  room.reports = room.reports || {};
+  const set = (room.reports[t.id] = room.reports[t.id] || new Set());
+  if (set.has(p.id)) fail('이미 신고했어요.');
+  p.reportCount = (p.reportCount || 0) + 1;
+  if (p.reportCount > 6) fail('신고를 너무 많이 했어요.');
+  set.add(p.id);
+  const humans = members(room).filter((x) => !x.bot).length;
+  const need = Math.max(2, Math.ceil(humans * 0.3));
+  const host = byId(room, room.hostId);
+  if (host && host !== p) addChat(room, 'priv', `🚨 ${t.name}님이 신고되었어요 (${set.size}명).${t.lastText ? ` 마지막 말: "${t.lastText.slice(0, 40)}"` : ''}`, null, host.id);
+  if (set.size >= need) {
+    t.flood = t.flood || { times: [], last: '', rep: 0, lastAt: 0, mute: 0 };
+    t.flood.mute = Date.now() + 60000;
+    room.reports[t.id] = new Set();
+    addChat(room, 'sys', `🚨 ${t.name}님이 여러 명에게 신고되어 60초 동안 말할 수 없어요.`);
+  }
+}
+
 function specAction(room, p, b) {
+  if (b.type === 'report') return reportAction(room, p, b);
   switch (b.type) {
     case 'chat': {
       const now = Date.now();
@@ -616,6 +639,7 @@ function specAction(room, p, b) {
 function handleAction(room, p, b) {
   room.lastActive = Date.now();
   if (p.spec) return specAction(room, p, b);
+  if (b.type === 'report') return reportAction(room, p, b);
   const isHost = room.hostId === p.id;
   switch (b.type) {
     case 'chat': {
