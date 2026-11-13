@@ -134,6 +134,7 @@ function assignRoles(room) {
   U.shuffle(room.players).forEach((p, i) => {
     p.role = roles[i]; p.alive = true; p.s = {}; p.team = null; p.destroyed = false; p.exorcised = false; p.blessed = false; p.blessedBy = null; p.loaning = false; p.origRole = roles[i]; p.guess = null; p.snap = null;
     p.contacted = p.role === 'mafia';
+    if (p.role === 'lucky') p.s.luckyNum = 1 + Math.floor(Math.random() * 50);
   });
   room.touches = []; room.voteActs = {}; room.pendingWin = null;
   room.startN = n;

@@ -194,6 +194,7 @@ function resolveNight(room) {
         priv(p, `🔎 ${t.name}님의 직업 후보: ${list.map((k) => ROLE[k].name).join(' / ')} (이 중 하나가 진짜예요)`);
         U.touch(room, p, t); break;
       }
+      case 'guardian': t.s.voteImmune = day; priv(p, `🛡 ${t.name}님을 오늘 투표 후보에서 제외했습니다.`); U.touch(room, p, t); break;
       case 'witness': witnesses.push({ p, t }); U.touch(room, p, t); break;
       case 'executor': executors.push({ p, t }); U.touch(room, p, t); break;
       case 'bettor': U.touch(room, p, t); break; // 가위바위보는 밤이 끝날 때 따로 진행
@@ -266,6 +267,11 @@ function resolveNight(room) {
         break;
       case 'destroyer': p.s.destroyUsed = (p.s.destroyUsed || 0) + 1; attacks.push({ kind: 'destroy', by: p, t }); U.touch(room, p, t); break;
       case 'gambler': p.s.gamble = t.id; break;
+      case 'evil': { // 능력은 없고 접선만 한다
+        U.touch(room, p, t);
+        if (U.isMafiaKnown(t)) U.contact(room, p, t); else priv(p, `🤝 ${t.name}님은 마피아가 아니었습니다.`);
+        break;
+      }
       case 'forger': case 'agitator': {
         if (!p.contacted) { // 마피아를 찾으면 접선
           U.touch(room, p, t);
@@ -385,7 +391,17 @@ function resolveNight(room) {
     if (r.t.alive || r.t.destroyed) { priv(r.by, `✨ ${r.t.name}님은 부활할 수 없습니다.`); continue; }
     if (r.type === 'angel' && U.teamOf(r.t) !== 'citizen') { priv(r.by, `😇 ${r.t.name}님은 시민 팀이 아니어서 부활에 실패했습니다.`); continue; }
     r.t.alive = true; revived.push(r.t);
+    // 부활하면 능력을 잃는다: 시민 팀은 시민, 마피아 팀은 악인이 된다 (중립은 그대로, 일반 시민·마피아도 그대로)
+    const tm = ROLE[r.t.role].team;
+    const to = tm === 'citizen' && r.t.role !== 'citizen' ? 'citizen' : tm === 'mafia' && r.t.role !== 'mafia' && r.t.role !== 'evil' ? 'evil' : null;
+    if (to) {
+      const old = U.roleName(r.t.role);
+      r.t.role = to; r.t.s = {};
+      priv(r.t, `💫 부활하면서 ${old}의 능력을 잃고 ${U.roleName(to)}이(가) 되었습니다.`);
+    }
   }
+  const imm = U.alive(room).filter((x) => x.s.voteImmune === day);
+  if (imm.length) U.sys(room, `🛡 오늘은 ${U.names(imm)}님에게 투표할 수 없습니다.`);
 
   // ---- 8.5 도박사: 예측한 사람이 이번 밤에 실제로 죽었는지 확인
   let gamblerWin = null;
@@ -468,6 +484,15 @@ function resolveNight(room) {
     }
   }
   if (gamblerWin && !room.pendingWin) room.pendingWin = gamblerWin;
+  if (!room.pendingWin) { // 행운아: 매일 밤 D50
+    for (const lk of U.alive(room)) {
+      if (lk.role !== 'lucky') continue;
+      if (!lk.s.luckyNum) lk.s.luckyNum = 1 + Math.floor(Math.random() * 50);
+      const roll = 1 + Math.floor(Math.random() * 50);
+      priv(lk, `🎲 오늘 밤 주사위: ${roll} (내 번호: ${lk.s.luckyNum})${roll === lk.s.luckyNum ? ' — 적중!' : ''}`);
+      if (roll === lk.s.luckyNum && !room.pendingWin) room.pendingWin = { kind: 'solo', ids: [lk.id], text: `🎰 행운아 ${lk.name}님의 주사위가 ${roll}을 맞춰 혼자 우승했습니다!` };
+    }
+  }
   if (!room.pendingWin) { // 내기꾼: 필요한 인원에게 가위바위보로 이겼고 아직 살아있다면 우승
     const need = U.bettorNeed(room);
     const bw = U.alive(room).find((x) => x.role === 'bettor' && (x.s.beaten || []).length >= need);

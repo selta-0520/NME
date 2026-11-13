@@ -250,6 +250,7 @@ function viewFor(room, p) {
   if (room.phase === 'ended') { v.replay = room.replay || []; v.titles = room.titles || []; }
   if (inGame) {
     v.me = E.meView(room, p);
+    if (room.phase === 'day' || room.phase === 'vote') v.immune = room.players.filter((x) => U.voteImmune(room, x)).map((x) => x.id);
     if (room.phase === 'day') v.dayAdj = (room.dayAdj && room.dayAdj[p.id]) || null;
     if (room.phase === 'speak' && room.speaker) { const sp = byId(room, room.speaker); v.speaker = { id: room.speaker, name: sp ? sp.name : '', role: sp ? sp.role : '' }; }
     if (room.phase === 'rps') v.rpsCount = (room.rps && room.rps.matches.length) || 0;
@@ -874,6 +875,7 @@ function handleAction(room, p, b) {
         const t = byId(room, b.target);
         if (!t || !t.alive) fail('투표할 수 없는 대상이에요.');
         if (t.id === p.id && !room.settings.selfVote) fail('자신에게는 투표할 수 없어요.');
+        if (U.voteImmune(room, t)) fail('오늘은 투표 후보에서 제외된 사람이에요.');
         room.votes[p.id] = t.id;
       }
       broadcastState(room);

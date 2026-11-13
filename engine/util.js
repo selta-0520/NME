@@ -90,8 +90,10 @@ U.survive = (room, p) => {
 // 파괴자가 한 판에 쓸 수 있는 횟수: 게임 시작 인원의 3분의 1 (내림, 최소 1번)
 U.destroyLimit = (room) => Math.max(1, Math.floor((room.startN || room.players.length) / 3));
 
-// 내기꾼이 우승하려면 가위바위보로 이겨야 하는 사람 수: 게임 시작 인원의 3분의 1 (올림, 최소 1명)
-U.bettorNeed = (room) => Math.max(1, Math.ceil((room.startN || room.players.length) / 3));
+// 내기꾼이 우승하려면 가위바위보로 이겨야 하는 사람 수: 게임 시작 인원의 5분의 1 (올림, 최소 1명)
+U.bettorNeed = (room) => Math.max(1, Math.ceil((room.startN || room.players.length) / 5));
+// 수호자: 그날 투표 후보에서 제외된 사람
+U.voteImmune = (room, p) => !!p && p.alive && p.s && p.s.voteImmune === room.day;
 
 // 도둑: 훔친 능력으로 잠시 바꿔서 실행한다 (역할·상태를 임시로 바꿨다가 되돌림)
 U.withLoan = (p, fn) => {

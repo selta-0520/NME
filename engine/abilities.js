@@ -35,6 +35,7 @@ function nightOptions(room, p, modeOverride) {
     case 'ninja': return o('🥷 상호작용을 바꿀 사람', others);
     case 'detective': return o('🕵 비교할 첫 번째 사람 (밤)', A);
     case 'inspector': return o('🔎 직업 후보를 볼 사람', others);
+    case 'guardian': return o('🛡 오늘 투표 후보에서 제외할 사람', others);
     case 'witness': return o('👁 공격받았는지 살필 사람', others);
     case 'executor': return o('📜 유언을 들을 사람 (그 사람이 오늘 밤 죽으면)', others);
     case 'poisoner': return p.contacted ? o('🧪 독을 걸 사람 (하루 뒤 아침에 죽어요)', others.filter((x) => !U.inMafiaChat(x))) : o('🤝 마피아인지 확인할 사람 (마피아면 접선)', others);
@@ -44,6 +45,7 @@ function nightOptions(room, p, modeOverride) {
       const left = U.destroyLimit(room) - (p.s.destroyUsed || 0);
       return left > 0 ? o(`💥 파괴할 사람 (남은 횟수 ${left}번)`, others) : null;
     }
+    case 'evil': return p.contacted ? null : o('🤝 마피아인지 확인할 사람 (마피아면 접선)', others);
     case 'forger': return p.contacted ? null : o('🤝 마피아인지 확인할 사람 (마피아면 접선)', others);
     case 'agitator': {
       if (!p.contacted) return o('🤝 마피아인지 확인할 사람 (마피아면 접선)', others);
@@ -83,7 +85,7 @@ function nightOptions(room, p, modeOverride) {
 // ------------------------------------------------------------ 투표시간 능력
 function voteOptions(room, p) {
   if (!p.alive || room.phase !== 'vote') return null;
-  const A = U.alive(room);
+  const A = U.alive(room).filter((x) => !U.voteImmune(room, x)); // 수호자가 지킨 사람은 투표 시간 능력의 대상도 될 수 없다
   const others = A.filter((x) => x.id !== p.id);
   const pick = (room.voteActs[p.id] || {}).target || null;
   const o = (label, list) => ({ label, targets: ids(list), pick });
@@ -232,6 +234,10 @@ function infoLines(room, p) {
     case 'judge': L.push(p.s.judgeUsed ? '⚖️ 판결을 이미 내렸어요.' : '⚖️ 찬반투표 시간에 처형의 찬성/반대를 직접 결정할 수 있어요. (1회)'); break;
     case 'prosecutor': { const m = other('lawyer'); L.push(`⚔️ 최후의 반론 뒤 추가 발언을 먼저 하고, 찬반투표에서 찬성이 2표예요.${m ? ` 변호사: ${m.name}${m.alive ? '' : ' (사망)'}` : ''}`); break; }
     case 'lawyer': { const m = other('prosecutor'); L.push(`⚖ 최후의 반론 뒤 검사 다음으로 추가 발언을 하고, 찬반투표에서 반대가 2표예요.${m ? ` 검사: ${m.name}${m.alive ? '' : ' (사망)'}` : ''}`); break; }
+    case 'guardian': L.push('🛡 밤마다 1명을 지목하면 그날 그 사람은 투표 후보에서 제외돼요. (그 사람도 투표는 할 수 있어요)'); break;
+    case 'evil': L.push(p.contacted ? '😈 마피아와 접선했어요. 특별한 능력은 없지만 마피아 팀과 밤에 대화할 수 있어요.' : '🤝 밤마다 1명을 골라 마피아인지 확인하세요. 마피아면 접선해서 마피아 팀과 대화할 수 있어요. (특별한 능력은 없어요)'); break;
+    case 'attention': L.push('📣 투표로 처형되면 혼자 우승해요!'); break;
+    case 'lucky': { if (!p.s.luckyNum) p.s.luckyNum = 1 + Math.floor(Math.random() * 50); L.push(`🎰 내 번호는 ${p.s.luckyNum}번! 매일 밤 D50(1~50) 주사위를 굴려 같은 수가 나오면 혼자 우승해요.`); break; }
     case 'witness': L.push('👁 밤마다 1명을 살펴서 그 사람이 공격받았다면 공격자 후보 3명을 알 수 있어요.'); break;
     case 'executor': L.push('📜 지목한 사람이 밤에 죽으면 직업을 알고, 아침에 10초 동안 단둘이 대화할 수 있어요.'); break;
     case 'poisoner': L.push(p.contacted ? '🧪 밤마다 1명에게 독을 걸어요. 중독된 사람은 하루 뒤 아침에 죽고(2일차 밤에 걸면 3일차 낮), 그 사이 밤에 치료받으면 살아나요.' : '🤝 밤에 마피아를 찾아 접선하세요. 접선하면 독을 걸 수 있어요.'); break;

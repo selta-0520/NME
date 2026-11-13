@@ -70,6 +70,7 @@ function resolveVote(room, opts) {
     else if (U.survive(room, T)) U.sys(room, `🍀 ${T.name}님은 처형에서 살아남았습니다!`);
     else {
       U.io.kill(room, T, '투표로 처형되었습니다.');
+      if (T.role === 'attention' && !room.pendingWin) room.pendingWin = { kind: 'solo', ids: [T.id], text: `📣 관종 ${T.name}님이 투표로 처형되어 혼자 우승했습니다!` };
       if (T.role === 'terrorist') { room.lastBoom = T.id; room.lastPick = null; } // 서버가 '마지막 선택' 시간을 열어 준다
     }
   } else {

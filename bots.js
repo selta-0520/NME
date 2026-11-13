@@ -224,7 +224,7 @@ function sus(room, me, c, o) {
 function townView(room, me, c) { return sus(room, me, c); }
 
 // 투표로 처형할 수 없다는 게 알려진 사람
-const immune = (room, c) => publicRole(room, c.id) === 'politician';
+const immune = (room, c) => publicRole(room, c.id) === 'politician' || U.voteImmune(room, c);
 
 // ------------------------------------------------------------ 밤: 대상 고르기
 function best(cands, fn, noise) {
@@ -288,6 +288,7 @@ function pickNight(room, p, opt, mode) {
       if (role === 'doppelganger') return (best(pool.length ? pool : cands, (c) => trust(c), N) || {}).id;
       return (best(pool.length ? pool : cands, (c) => killValue(room, p, c), N * 2) || {}).id;
     }
+    case 'guardian': return (best(cands, (c) => -S(c), N) || {}).id;
     case 'witness': case 'executor': return (best(cands, (c) => S(c), N) || {}).id;
     case 'assassin': { const pool = cands.filter((c) => !knownMate(p, c)); return (best(pool.length ? pool : cands, (c) => killValue(room, p, c), N * 2) || {}).id; }
     case 'destroyer': return (best(cands, (c) => (claimedRole(room, c.id, 'police') ? 150 : 0) + (claimedRole(room, c.id, 'doctor') ? 80 : 0) + trust(c) * 0.15, N * 2) || {}).id;
@@ -301,7 +302,7 @@ function pickNight(room, p, opt, mode) {
     }
     case 'angel': // 사제: 위협적인 진짜(처럼 보이는) 경찰·의사, 아니면 자신
       return (best(cands, (c) => (claimedRole(room, c.id, 'police') ? cred(room, p, c.id, 'police') * 160 : 0) + (claimedRole(room, c.id, 'doctor') ? 60 : 0) + (c.id === p.id ? 30 : 0) + trust(c) * 0.12, N) || {}).id;
-    case 'forger': case 'agitator': case 'poisoner': { // 접선 전: 마피아를 찾는 탐색 (이미 확인한 사람은 제외)
+    case 'forger': case 'agitator': case 'poisoner': case 'evil': { // 접선 전: 마피아를 찾는 탐색 (이미 확인한 사람은 제외)
       const pool = cands.filter((c) => !b.checks[c.id] && !knownMate(p, c));
       const pick = rnd(pool.length ? pool : cands);
       if (pick && !b.checks[pick.id]) b.checks[pick.id] = 'tried';

@@ -671,7 +671,7 @@ function targetable(q) {
   if (st.phase === 'night') return !!(me.night && me.night.targets.includes(q.id));
   if (st.phase === 'vote') {
     if (uiMode === 'ability' && me.voteAbility) return me.voteAbility.targets.includes(q.id);
-    return me.canVote && q.alive && (q.id !== st.meId || !!st.settings.selfVote);
+    return me.canVote && q.alive && !(st.immune || []).includes(q.id) && (q.id !== st.meId || !!st.settings.selfVote);
   }
   return false;
 }
@@ -737,6 +737,7 @@ function playerCard(q, opts) {
     if (mm && mm.length) card.append(h('div', { class: 'ptag memo' }, '📝 ' + mm.map((k) => ROLE[k] ? ROLE[k].name : k).join('/') + '?'));
     card.append(h('button', { class: 'memo-btn', title: '직업 메모', onclick: (e) => { e.stopPropagation(); openMemo(q.id); } }, '📝'));
   }
+  if (q.alive && (st.immune || []).includes(q.id) && (st.phase === 'day' || st.phase === 'vote')) card.append(h('div', { class: 'ptag', style: 'color:var(--ok)' }, '🛡 투표 제외'));
   if (!q.alive) card.append(h('div', { class: 'ptag' }, '💀 사망'));
   else if (!q.connected && st.phase !== 'lobby') card.append(h('div', { class: 'ptag' }, '연결 끊김'));
   if (st.phase === 'ended' && st.winner && st.winner.ids.includes(q.id)) card.append(h('div', { class: 'ptag', style: 'color:var(--ok)' }, '🏆 승리'));
