@@ -34,7 +34,8 @@ function confirmTally(room) {
   for (const [pid, c] of Object.entries(room.confirm || {})) {
     const v = U.byId(room, pid);
     if (!v || !v.alive || v === T || !AB.canVote(room, v)) continue;
-    if (c === 'yes') yes += v.role === 'prosecutor' ? 2 : weight(v); else if (c === 'no') no += v.role === 'lawyer' ? 2 : weight(v); // 검사: 찬성 2표 / 변호사: 반대 2표
+    const ex = !!(room.extra && room.extra[v.id]); // 능력을 쓰기로 한 경우에만
+    if (c === 'yes') yes += v.role === 'prosecutor' && ex ? 2 : weight(v); else if (c === 'no') no += v.role === 'lawyer' && ex ? 2 : weight(v); // 검사: 찬성 2표 / 변호사: 반대 2표
   }
   if (room.judgeVerdict) return { yes, no, ok: room.judgeVerdict.ok, judged: true, judge: room.judgeVerdict.by }; // 판사의 판결이 우선
   return { yes, no, ok: yes > no };

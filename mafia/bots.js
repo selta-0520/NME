@@ -682,8 +682,9 @@ function botConfirm(room, p) {
   sync(room, p);
   const L = lv(room, p);
   let yes;
-  if (p.role === 'prosecutor') yes = chance(0.85); // 검사는 찬성, 변호사는 반대 쪽
-  else if (p.role === 'lawyer') yes = chance(0.15);
+  const usedExtra = !!(room.extra && room.extra[p.id]);
+  if (p.role === 'prosecutor' && usedExtra) yes = chance(0.85); // 능력을 쓴 검사는 찬성, 변호사는 반대 쪽
+  else if (p.role === 'lawyer' && usedExtra) yes = chance(0.15);
   else if (mafiaSide(p) && knownMate(p, T)) yes = chance(L.mistake);
   else if (room.votes[p.id] === T.id) yes = chance(0.92);
   else { const W = L.wise || 0; const sc = W >= 0.7 ? 0.6 * sus(room, p, T, { noSocial: true }) + 0.4 * sus(room, p, T) : sus(room, p, T); yes = chance(Math.max(0.12, Math.min(0.93, 0.58 + sc / 120))); }
@@ -776,7 +777,15 @@ function schedule(room) {
         if (t && sus(room, p, t) > 15 && pm(p).intentSaid !== room.day) { pm(p).intentSaid = room.day; say(room, p, `오늘은 ${t.name}님에게 투표할게요.`, { intent: t.id }); }
       });
     } else if (phase === 'vote') at(0.2, 0.85, () => botVote(room, p));
-    else if (phase === 'defense') { if (room.defense && room.defense.id === p.id) at(0.1, 0.4, () => botDefense(room, p)); }
+    else if (phase === 'defense') {
+      if (room.defense && room.defense.id === p.id) at(0.1, 0.4, () => botDefense(room, p));
+      else if ((p.role === 'prosecutor' || p.role === 'lawyer') && room.defense) at(0.15, 0.6, () => { // 검사·변호사: 능력을 쓸지 고른다
+        sync(room, p); const T = U.byId(room, room.defense.id); if (!T) return;
+        const s = sus(room, p, T);
+        const use = p.role === 'prosecutor' ? chance(s > -20 ? 0.85 : 0.3) : chance(s < 40 ? 0.7 : 0.25);
+        act(room, p, { type: 'extra', use });
+      });
+    }
     else if (phase === 'speak') { if (room.speaker === p.id) at(0.1, 0.4, () => say(room, p, p.role === 'prosecutor' ? rnd(['이 사람은 정말 수상해요. 처형에 찬성해 주세요.', '지금까지의 행동을 보면 마피아일 가능성이 높아요. 찬성해 주세요.']) : rnd(['성급한 처형은 위험해요. 반대에 투표해 주세요.', '확실한 증거가 없어요. 이번에는 반대해 주세요.']))); }
     else if (phase === 'rps') { if ((room.rps && room.rps.matches || []).some((m) => m.b === p.id || m.t === p.id)) at(0.1, 0.7, () => act(room, p, { type: 'rps', sign: rnd(['r', 'p', 's']) })); }
     else if (phase === 'confirm') at(0.15, 0.75, () => botConfirm(room, p));

@@ -6,7 +6,7 @@
 const { ROLES, roleCap } = require('../roles');
 const U = require('./util');
 
-const SIZE = (k) => (k === 'couple' || k === 'beggar' || k === 'prosecutor' ? 2 : 1); // 커플·(거지+부자)·(검사+변호사)는 2명이 한 묶음
+const SIZE = (k) => (k === 'couple' || k === 'beggar' ? 2 : 1); // 커플·(거지+부자)는 2명이 한 묶음 (검사·변호사는 각각 따로)
 
 function assignRoles(room) {
   const s = room.settings;
@@ -14,9 +14,8 @@ function assignRoles(room) {
   const enabled = new Set(s.enabledRoles);
   const forcedSet = new Set(s.forcedRoles || []); // ⭐ 필수 = 최소 1명
   if (!enabled.has('beggar') || !enabled.has('rich')) { enabled.delete('beggar'); enabled.delete('rich'); }
-  if (!enabled.has('prosecutor') || !enabled.has('lawyer')) { enabled.delete('prosecutor'); enabled.delete('lawyer'); }
   const skipped = [], notes = [];
-  if (!s.finalDefense && enabled.has('prosecutor')) { enabled.delete('prosecutor'); enabled.delete('lawyer'); notes.push('ℹ️ 최후의 반론이 꺼져 있어 검사·변호사는 나오지 않아요.'); }
+  if (!s.finalDefense && (enabled.has('prosecutor') || enabled.has('lawyer'))) { enabled.delete('prosecutor'); enabled.delete('lawyer'); notes.push('ℹ️ 최후의 반론이 꺼져 있어 검사·변호사는 나오지 않아요.'); }
 
   // 직업별 [최소, 최대] (묶음 개수 기준)
   const rng = (key) => {
@@ -29,7 +28,7 @@ function assignRoles(room) {
     if (key === 'mafia' && mx > 0) mn = Math.max(mn, 1); // 마피아를 켜 두었다면 일반 마피아는 항상 1명 이상 (공격할 사람이 있어야 하니까)
     return [mn, mx];
   };
-  const keysOf = (team) => ROLES.filter((r) => r.team === team && r.key !== 'rich' && r.key !== 'lawyer' && rng(r.key)[1] > 0).map((r) => r.key);
+  const keysOf = (team) => ROLES.filter((r) => r.team === team && r.key !== 'rich' && rng(r.key)[1] > 0).map((r) => r.key);
   const counts = {};
   const cnt = (k) => counts[k] || 0;
   const add = (k) => { counts[k] = cnt(k) + 1; };
@@ -125,7 +124,6 @@ function assignRoles(room) {
     for (let i = 0; i < v; i++) {
       if (k === 'couple') list.push('couple', 'couple');
       else if (k === 'beggar') list.push('beggar', 'rich');
-      else if (k === 'prosecutor') list.push('prosecutor', 'lawyer');
       else list.push(k);
     }
   }

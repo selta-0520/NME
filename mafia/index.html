@@ -907,6 +907,13 @@ function renderMain() {
     if (st.phase === 'defense') {
       box.append(h('div', { class: 'big' }, `🛡 ${st.defense.name}님의 최후의 반론`),
         h('div', { class: 'hint' }, isT ? '지금은 나만 말할 수 있어요. 아래 채팅으로 억울함을 호소하세요!' : '처형 후보가 말하는 중이에요. 잘 듣고 이어지는 찬반투표에서 결정하세요.'));
+      if (me.extra) { // 검사·변호사: 능력을 쓸지 고른다
+        const pro = me.role === 'prosecutor';
+        box.append(h('div', { class: 'hint', style: 'margin-top:8px' }, pro ? '⚔️ 검사 능력: 쓰면 반론 뒤 추가 발언을 하고 찬반투표에서 찬성이 2표예요. 안 쓰면 바로 찬반투표예요. (안 고르면 쓰지 않아요)' : '⚖ 변호사 능력: 쓰면 반론 뒤 추가 발언을 하고 찬반투표에서 반대가 2표예요. 안 쓰면 바로 찬반투표예요. (안 고르면 쓰지 않아요)'),
+          h('div', { class: 'actions' },
+            h('button', { class: me.extra.use ? '' : 'ghost', onclick: () => act('extra', { use: true }) }, me.extra.use ? '✔ 능력 사용함' : '능력 사용'),
+            h('button', { class: me.extra.use ? 'ghost' : '', onclick: () => act('extra', { use: false }) }, !me.extra.use ? '✔ 사용 안 함' : '사용 안 함')));
+      }
     } else if (st.phase === 'speak') {
       const sp = st.speaker || {}; const isMe = sp.id === st.meId;
       box.append(h('div', { class: 'big' }, isMe ? '⚔️ 당신의 추가 발언 시간' : '⚔️ 추가 발언 시간'),
@@ -1067,7 +1074,7 @@ function useField(key, label) {
 }
 function sendPatch(patch) { act('settings', { patch }); }
 // 거지와 부자는 "거지 & 부자" 한 묶음: 한 번 고르면 둘이 같이 선택돼요
-const PAIR2 = { beggar: 'rich', prosecutor: 'lawyer' }; // 한 묶음으로 배정되는 직업 쌍
+const PAIR2 = { beggar: 'rich' }; // 한 묶음으로 배정되는 직업 쌍
 const withPair = (keys) => keys.flatMap((k) => (PAIR2[k] ? [k, PAIR2[k]] : [k]));
 function rolePatch() {
   const on = [...document.querySelectorAll('#sheet input[data-role]')].filter((c) => c.checked).map((c) => c.getAttribute('data-role'));
@@ -1092,9 +1099,8 @@ function stepper(key, kind) {
     h('button', { class: 'ghost', 'data-step': kind + ':' + key, onclick: () => go(-1) }, '−'), val,
     h('button', { class: 'ghost', 'data-step': kind + ':' + key, onclick: () => go(1) }, '+'));
 }
-function roleTitle(r) { return r.key === 'beggar' ? '거지 & 부자' : r.key === 'prosecutor' ? '검사 & 변호사' : r.name; }
+function roleTitle(r) { return r.key === 'beggar' ? '거지 & 부자' : r.name; }
 function roleDescEls(r, cls) {
-  if (r.key === 'prosecutor') return [h('div', { class: cls }, '⚔️ 검사: ' + r.desc), h('div', { class: cls, style: 'margin-top:4px' }, '⚖ 변호사: ' + ROLE.lawyer.desc)];
   if (r.key !== 'beggar') return [h('div', { class: cls }, r.desc)];
   return [h('div', { class: cls }, '🙏 거지: ' + r.desc), h('div', { class: cls, style: 'margin-top:4px' }, '💰 부자: ' + ROLE.rich.desc)];
 }
@@ -1127,6 +1133,8 @@ function buildSettings() {
     ...USE_FIELDS.map(([k, label]) => useField(k, label)),
     numField('destroyMax', '💥 파괴자 파괴 횟수 (0 = 자동: 시작 인원 ÷ 3)', '번'),
     h('h3', null, '기타'),
+    h('label', { class: 'field' }, h('span', null, '마피아 팀킬 허용 (마피아 팀이 같은 팀도 공격할 수 있음, 기본 꺼짐)'),
+      h('input', { type: 'checkbox', 'data-key': 'teamKill', style: 'width:20px;height:20px', onchange: (e) => sendPatch({ teamKill: e.target.checked }) })),
     h('label', { class: 'field' }, h('span', null, '투표 기권 허용 (기본 꺼짐)'),
       h('input', { type: 'checkbox', 'data-key': 'abstain', style: 'width:20px;height:20px', onchange: (e) => sendPatch({ abstain: e.target.checked }) })),
     h('label', { class: 'field' }, h('span', null, '자기 자신에게 투표 허용'),
@@ -1309,7 +1317,7 @@ function buildGuide() {
       sheet.append(h('div', { class: 'teamhead' }, h('span', { style: 'color:' + TEAM_COLOR[team] }, meta.teams[team])));
       for (const r of meta.roles.filter((x) => x.team === team && x.impl && !isPairRich(x))) {
         const included = on.includes(r.key);
-        const mine = st.me && (st.me.role === r.key || (r.key === 'beggar' && st.me.role === 'rich') || (r.key === 'prosecutor' && st.me.role === 'lawyer'));
+        const mine = st.me && (st.me.role === r.key || (r.key === 'beggar' && st.me.role === 'rich'));
         sheet.append(h('div', { class: 'rrow' + (included ? '' : ' off') },
           h('div', null,
             h('div', { class: 'rn' }, roleTitle(r), mine ? h('span', { class: 'mine' }, '내 직업') : null, included ? null : h('span', { class: 'soon' }, '이번 판 제외')),

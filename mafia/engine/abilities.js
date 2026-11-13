@@ -18,9 +18,9 @@ function nightOptions(room, p, modeOverride) {
 
   switch (p.role) {
     case 'mafia':
-      return o('🔪 공격할 사람', others.filter((x) => !U.inMafiaChat(x)));
+      return o('🔪 공격할 사람', others.filter((x) => room.settings.teamKill || !U.inMafiaChat(x)));
     case 'doppelganger':
-      if (U.canAttackAsMafia(room, p)) return o('🔪 공격할 사람', others.filter((x) => !U.inMafiaChat(x)));
+      if (U.canAttackAsMafia(room, p)) return o('🔪 공격할 사람', others.filter((x) => room.settings.teamKill || !U.inMafiaChat(x)));
       return o('🎭 흉내 낼 사람', others);
     case 'spy': return o('🕵 직업을 조사할 사람', others);
     case 'police': return o('🔍 마피아인지 조사할 사람', others);
@@ -38,7 +38,7 @@ function nightOptions(room, p, modeOverride) {
     case 'guardian': return U.usesLeft(room, p, 'guardian') <= 0 ? null : o(`🛡 투표 후보에서 제외할 사람 (${U.usesTag(room, p, 'guardian')})`, others);
     case 'witness': return o('👁 공격받았는지 살필 사람', others);
     case 'executor': return o('📜 유언을 들을 사람 (그 사람이 오늘 밤 죽으면)', others);
-    case 'poisoner': return p.contacted ? o('🧪 독을 걸 사람 (하루 뒤 아침에 죽어요)', others.filter((x) => !U.inMafiaChat(x))) : o('🤝 마피아인지 확인할 사람 (마피아면 접선)', others);
+    case 'poisoner': return p.contacted ? o('🧪 독을 걸 사람 (하루 뒤 아침에 죽어요)', others.filter((x) => room.settings.teamKill || !U.inMafiaChat(x))) : o('🤝 마피아인지 확인할 사람 (마피아면 접선)', others);
     case 'bettor': return o('✊ 가위바위보를 할 사람', others.filter((x) => !(p.s.beaten || []).includes(x.id)));
     case 'bodyguard': return o('🛡 지킬 사람', others);
     case 'destroyer': {
@@ -65,7 +65,7 @@ function nightOptions(room, p, modeOverride) {
     }
     case 'rich': return o('💰 거지인지 확인할 사람', others);
     case 'ghost': return o('👻 겁줄 사람', others.filter((x) => !(p.s.lastScare && p.s.lastScare.day === room.day - 1 && p.s.lastScare.id === x.id)));
-    case 'assassin': return p.contacted ? o('🗡 죽일 사람 (상대의 능력을 무시)', others.filter((x) => !U.inMafiaChat(x))) : null;
+    case 'assassin': return p.contacted ? o('🗡 죽일 사람 (상대의 능력을 무시)', others.filter((x) => room.settings.teamKill || !U.inMafiaChat(x))) : null;
     case 'scientist': {
       if (U.usesLeft(room, p, 'scientist') <= 0) return null; // 물약 횟수 제한
       const modes = [{ key: 'heal', label: '살리는 물약' }, { key: 'kill', label: '죽이는 물약' }];
@@ -233,8 +233,8 @@ function infoLines(room, p) {
     case 'rich': L.push(p.s.meetDay != null ? '🎉 거지를 만났어요! 둘 다 살아있으면 곧 우승해요.' : '💰 거지를 찾아 보세요.'); break;
     case 'revolutionary': L.push(p.s.joined ? `✊ ${p.team === 'mafia' ? '마피아' : '시민'} 팀이 되었어요.` : '✊ 4일차 낮까지 아무도 나에게 능력을 쓰지 않으면 우승해요.'); break;
     case 'judge': L.push(U.usesLeft(room, p, 'judge') <= 0 ? '⚖️ 판결을 모두 내렸어요.' : `⚖️ 찬반투표 시간에 처형의 찬성/반대를 직접 결정할 수 있어요. (${U.usesTag(room, p, 'judge')})`); break;
-    case 'prosecutor': { const m = other('lawyer'); L.push(`⚔️ 최후의 반론 뒤 추가 발언을 먼저 하고, 찬반투표에서 찬성이 2표예요.${m ? ` 변호사: ${m.name}${m.alive ? '' : ' (사망)'}` : ''}`); break; }
-    case 'lawyer': { const m = other('prosecutor'); L.push(`⚖ 최후의 반론 뒤 검사 다음으로 추가 발언을 하고, 찬반투표에서 반대가 2표예요.${m ? ` 검사: ${m.name}${m.alive ? '' : ' (사망)'}` : ''}`); break; }
+    case 'prosecutor': { const m = other('lawyer'); L.push(`⚔️ 처형 후보의 최후의 반론 시간에 능력을 쓸지 고를 수 있어요. 쓰면 반론 뒤 추가 발언을 먼저 하고, 찬반투표에서 찬성이 2표예요. (안 쓰면 바로 찬반투표)${m ? ` 변호사: ${m.name}${m.alive ? '' : ' (사망)'}` : ''}`); break; }
+    case 'lawyer': { const m = other('prosecutor'); L.push(`⚖ 처형 후보의 최후의 반론 시간에 능력을 쓸지 고를 수 있어요. 쓰면 반론 뒤 (검사 다음으로) 추가 발언을 하고, 찬반투표에서 반대가 2표예요. (안 쓰면 바로 찬반투표)${m ? ` 검사: ${m.name}${m.alive ? '' : ' (사망)'}` : ''}`); break; }
     case 'guardian': L.push(U.usesLeft(room, p, 'guardian') <= 0 ? '🛡 능력을 모두 사용했어요.' : `🛡 밤에 1명을 지목하면 그날 그 사람은 투표 후보에서 제외돼요. (${U.usesTag(room, p, 'guardian')}, 그 사람도 투표는 할 수 있어요)`); break;
     case 'evil': L.push(p.contacted ? '😈 마피아와 접선했어요. 특별한 능력은 없지만 마피아 팀과 밤에 대화할 수 있어요.' : '🤝 밤마다 1명을 골라 마피아인지 확인하세요. 마피아면 접선해서 마피아 팀과 대화할 수 있어요. (특별한 능력은 없어요)'); break;
     case 'attention': L.push('📣 투표로 처형되면 혼자 우승해요!'); break;

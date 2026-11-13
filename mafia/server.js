@@ -73,6 +73,7 @@ function defaultSettings() {
     destroyMax: 0, // 파괴자 파괴 횟수 (0 = 자동: 시작 인원 ÷ 3)
     uses: Object.fromEntries(U.USE_KEYS.map((k) => [k, 1])), // 횟수 제한 능력의 사용 횟수
     abstain: false, // 투표 기권 허용
+    teamKill: false, // 마피아 팀킬 허용 (마피아 팀이 같은 팀을 공격할 수 있음)
     revealOnDeath: false,
     jokerReveal: 'off', // off | shuffle | end
     randomEvents: false, // 낮마다 가끔 랜덤 이벤트
@@ -98,6 +99,7 @@ function applySettings(s, patch) {
   if (Bots.LEVEL_KEYS.includes(patch.botLevel)) s.botLevel = patch.botLevel;
   if (patch.selfVote !== undefined) s.selfVote = !!patch.selfVote;
   if (patch.abstain !== undefined) s.abstain = !!patch.abstain;
+  if (patch.teamKill !== undefined) s.teamKill = !!patch.teamKill;
   if (patch.uses && typeof patch.uses === 'object') {
     s.uses = s.uses || {};
     for (const k of U.USE_KEYS) if (patch.uses[k] !== undefined) s.uses[k] = clamp(patch.uses[k], USES_LIMIT, s.uses[k] || 1);
@@ -136,7 +138,7 @@ function applySettings(s, patch) {
   s.forcedRoles = ROLES.map((r) => r.key).filter((k) => s.enabledRoles.includes(k) && s.roleMin[k] >= 1);
 }
 // 한 묶음으로 배정되는 직업 쌍: 거지 & 부자, 검사 & 변호사. 한쪽만 바뀌어 오면 이전 상태를 보고 둘 다 켜거나 둘 다 끈다
-const PAIRS = [['beggar', 'rich'], ['prosecutor', 'lawyer']];
+const PAIRS = [['beggar', 'rich']];
 const SECOND = new Set(PAIRS.map((x) => x[1]));
 function fixPair(list, prev) {
   for (const [a, b] of PAIRS) {
@@ -497,7 +499,7 @@ function nextSpeakOrConfirm(room) {
     const sp = byId(room, id);
     if (!sp || !sp.alive) return nextSpeakOrConfirm(room);
     room.speaker = sp.id;
-    addChat(room, 'sys', `⚔️ 추가 발언 시간입니다. (${room.settings.defenseSec}초) 추가 발언 자격이 있는 사람만 말할 수 있어요.`);
+    addChat(room, 'sys', `⚔️ 추가 발언 시간입니다. (${room.settings.defenseSec}초) 추가 발언을 하는 사람만 말할 수 있어요.`);
     U.priv(room, sp, `⚔️ 당신의 추가 발언 시간이에요! ${room.settings.defenseSec}초 동안 채팅으로 설득하세요. (말하지 않아도 돼요. 정체는 공개되지 않아요)`);
     setPhase(room, 'speak');
     return;
@@ -523,7 +525,7 @@ function advance(room) {
     if (room.settings.finalDefense && t.leader && t.leader.alive && room.players.filter((x) => x.alive && x !== t.leader).length) {
       // 최후의 반론 → 찬반투표
       E.announceTally(room, t);
-      room.defense = { id: t.leader.id };
+      room.defense = { id: t.leader.id }; room.extra = {};
       addChat(room, 'sys', `🛡 최후의 반론: ${t.leader.name}님이 처형 후보입니다. ${room.settings.defenseSec}초 동안 ${t.leader.name}님만 말할 수 있어요.`);
       setPhase(room, 'defense');
       return;
@@ -540,7 +542,8 @@ function advance(room) {
   } else if (room.phase === 'defense') {
     if (!E.confirmVoters(room).length) { finishVote(room, { ok: true }); return; } // 투표할 사람이 없으면 그대로 진행
     const T = room.defense && byId(room, room.defense.id);
-    room.speakQueue = ['prosecutor', 'lawyer'].map((r) => alivePlayers(room).find((x) => x.role === r && x !== T)).filter(Boolean).map((x) => x.id);
+    // 검사·변호사가 능력을 쓰겠다고 고른 경우에만 추가 발언 (아무도 안 썼으면 바로 찬반투표)
+    room.speakQueue = ['prosecutor', 'lawyer'].map((r) => alivePlayers(room).find((x) => x.role === r && x !== T && room.extra && room.extra[x.id])).filter(Boolean).map((x) => x.id);
     nextSpeakOrConfirm(room);
   } else if (room.phase === 'speak') {
     room.speaker = null;
@@ -903,6 +906,14 @@ function handleAction(room, p, b) {
       broadcastState(room);
       const seq = room.seq;
       if (E.rpsDone(room)) setTimeout(() => { if (room.seq === seq && room.phase === 'rps' && E.rpsDone(room)) safeAdvance(room); }, 800);
+      return;
+    }
+    case 'extra': { // ⚔️ 검사·변호사: 최후의 반론 시간에 능력(추가 발언 + 찬반 2표)을 쓸지 고른다
+      if (room.phase !== 'defense' || !room.defense) fail('최후의 반론 시간에만 고를 수 있어요.');
+      if ((p.role !== 'prosecutor' && p.role !== 'lawyer') || !p.alive) fail('검사·변호사만 쓸 수 있어요.');
+      if (room.defense.id === p.id) fail('처형 후보는 쓸 수 없어요.');
+      room.extra = room.extra || {}; room.extra[p.id] = !!b.use;
+      broadcastState(room);
       return;
     }
     case 'judge': { // ⚖️ 판사: 찬반투표의 결과를 직접 결정 (1회)
