@@ -65,7 +65,7 @@ function resolveVote(room, opts) {
     if (opts.defense) U.sys(room, `⚖️ 찬반투표에서 찬성이 더 많아 ${T.name}님의 처형이 확정되었습니다.`);
     if (T.role === 'politician') U.sys(room, `🏛 정치인 ${T.name}님은 투표로 죽지 않습니다!`);
     else if (T.role === 'beggar' && !T.s.met) U.sys(room, `🙏 거지 ${T.name}님은 투표로 죽지 않습니다!`);
-    else if (T.role === 'madman' && !T.s.shieldUsed) { T.s.shieldUsed = true; U.sys(room, `🌀 ${T.name}님은 처형 투표에서 살아남았습니다!`); }
+    else if (T.role === 'madman' && U.usesLeft(room, T, 'madman') > 0) { U.useOne(T, 'madman'); U.sys(room, `🌀 ${T.name}님은 처형 투표에서 살아남았습니다!`); }
     else if (T.role === 'fugitive' && !T.s.escaped) { T.s.escaped = true; U.sys(room, `🏃 ${T.name}님이 처형을 피해 도망쳤습니다! (이제 투표할 수 없습니다)`); }
     else if (U.survive(room, T)) U.sys(room, `🍀 ${T.name}님은 처형에서 살아남았습니다!`);
     else {

@@ -36,7 +36,9 @@ const LIMITS = {
   citizenSpecialMax: [0, 40],
   neutralMax: [0, 10],
   gamblerHits: [1, 10],
+  destroyMax: [0, 10],
 };
+const USES_LIMIT = [1, 5]; // 횟수 제한 능력의 최소~최대 사용 횟수
 
 const rooms = new Map();
 
@@ -68,6 +70,9 @@ function defaultSettings() {
     citizenSpecialMax: 12,
     neutralMax: 2,
     gamblerHits: 3,
+    destroyMax: 0, // 파괴자 파괴 횟수 (0 = 자동: 시작 인원 ÷ 3)
+    uses: Object.fromEntries(U.USE_KEYS.map((k) => [k, 1])), // 횟수 제한 능력의 사용 횟수
+    abstain: false, // 투표 기권 허용
     revealOnDeath: false,
     jokerReveal: 'off', // off | shuffle | end
     randomEvents: false, // 낮마다 가끔 랜덤 이벤트
@@ -92,6 +97,11 @@ function applySettings(s, patch) {
   if (patch.jokerReveal !== undefined && ['off', 'shuffle', 'end'].includes(patch.jokerReveal)) s.jokerReveal = patch.jokerReveal;
   if (Bots.LEVEL_KEYS.includes(patch.botLevel)) s.botLevel = patch.botLevel;
   if (patch.selfVote !== undefined) s.selfVote = !!patch.selfVote;
+  if (patch.abstain !== undefined) s.abstain = !!patch.abstain;
+  if (patch.uses && typeof patch.uses === 'object') {
+    s.uses = s.uses || {};
+    for (const k of U.USE_KEYS) if (patch.uses[k] !== undefined) s.uses[k] = clamp(patch.uses[k], USES_LIMIT, s.uses[k] || 1);
+  }
   const ok = new Set(ROLES.map((r) => r.key));
   const clean = (l) => [...new Set(l)].filter((k) => ok.has(k));
   const prevEn = s.enabledRoles.slice(), prevFo = s.forcedRoles.slice();
@@ -252,7 +262,7 @@ function viewFor(room, p) {
     v.me = E.meView(room, p);
     if (room.phase === 'day' || room.phase === 'vote') v.immune = room.players.filter((x) => U.voteImmune(room, x)).map((x) => x.id);
     if (room.phase === 'day') v.dayAdj = (room.dayAdj && room.dayAdj[p.id]) || null;
-    if (room.phase === 'speak' && room.speaker) { const sp = byId(room, room.speaker); v.speaker = { id: room.speaker, name: sp ? sp.name : '', role: sp ? sp.role : '' }; }
+    if (room.phase === 'speak' && room.speaker) { const sp = byId(room, room.speaker); v.speaker = { id: room.speaker, name: sp ? sp.name : '' }; }
     if (room.phase === 'rps') v.rpsCount = (room.rps && room.rps.matches.length) || 0;
     if (room.phase === 'day' && E.AB.activeWill(room, p)) { const w = E.AB.activeWill(room, p); const o = byId(room, w.a === p.id ? w.b : w.a); v.will = { until: w.until, with: o ? o.name : '' }; }
     if (room.phase === 'last' && room.lastBoom) { const t = byId(room, room.lastBoom); v.last = { terrorist: room.lastBoom, name: t ? t.name : '' }; }
@@ -487,7 +497,7 @@ function nextSpeakOrConfirm(room) {
     const sp = byId(room, id);
     if (!sp || !sp.alive) return nextSpeakOrConfirm(room);
     room.speaker = sp.id;
-    addChat(room, 'sys', `⚔️ ${roleName(sp.role)} ${sp.name}님의 추가 발언 시간입니다. ${room.settings.defenseSec}초 동안 ${sp.name}님만 말할 수 있어요.`);
+    addChat(room, 'sys', `⚔️ ${sp.name}님의 추가 발언 시간입니다. ${room.settings.defenseSec}초 동안 ${sp.name}님만 말할 수 있어요.`);
     setPhase(room, 'speak');
     return;
   }
@@ -517,7 +527,7 @@ function advance(room) {
       setPhase(room, 'defense');
       return;
     }
-    if (!room.settings.finalDefense && t.leader && t.leader.alive && alivePlayers(room).some((x) => x.role === 'judge' && x !== t.leader && !x.s.judgeUsed)) {
+    if (!room.settings.finalDefense && t.leader && t.leader.alive && alivePlayers(room).some((x) => x.role === 'judge' && x !== t.leader && U.usesLeft(room, x, 'judge') > 0)) {
       // 최후의 반론이 꺼져 있어도 판사는 판결할 수 있다: 처형 직전에 짧은 시간을 준다 (판결이 없으면 그대로 처형)
       E.announceTally(room, t);
       room.defense = { id: t.leader.id }; room.judgeOnly = true;
@@ -870,7 +880,7 @@ function handleAction(room, p, b) {
       const why = E.voteBlockReason(room, p);
       if (why) fail(why);
       if (b.target === null || b.target === '' || b.target === undefined) delete room.votes[p.id];
-      else if (b.target === 'skip') room.votes[p.id] = 'skip';
+      else if (b.target === 'skip') { if (!room.settings.abstain) fail('이 방에서는 기권할 수 없어요.'); room.votes[p.id] = 'skip'; }
       else {
         const t = byId(room, b.target);
         if (!t || !t.alive) fail('투표할 수 없는 대상이에요.');
@@ -897,10 +907,11 @@ function handleAction(room, p, b) {
     case 'judge': { // ⚖️ 판사: 찬반투표의 결과를 직접 결정 (1회)
       if (room.phase !== 'confirm' || !room.defense) fail('판결은 찬반투표 시간에만 내릴 수 있어요.');
       if (p.role !== 'judge' || !p.alive) fail('판사만 쓸 수 있어요.');
-      if (p.s.judgeUsed) fail('이미 판결을 내렸어요.');
+      if (U.usesLeft(room, p, 'judge') <= 0) fail('판결할 수 있는 횟수를 모두 썼어요.');
+      if (room.judgeVerdict) fail('이번 처형은 이미 판결이 내려졌어요.');
       if (room.defense.id === p.id) fail('처형 후보는 판결할 수 없어요.');
       if (b.verdict !== 'yes' && b.verdict !== 'no') fail('찬성 또는 반대를 골라 주세요.');
-      p.s.judgeUsed = true; room.judgeVerdict = { ok: b.verdict === 'yes', by: p.id };
+      U.useOne(p, 'judge'); room.judgeVerdict = { ok: b.verdict === 'yes', by: p.id };
       addChat(room, 'sys', `⚖️ 판사 ${p.name}님이 판결을 내렸습니다!`);
       broadcastState(room);
       const seq = room.seq;

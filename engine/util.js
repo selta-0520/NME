@@ -88,7 +88,15 @@ U.survive = (room, p) => {
 };
 
 // 파괴자가 한 판에 쓸 수 있는 횟수: 게임 시작 인원의 3분의 1 (내림, 최소 1번)
-U.destroyLimit = (room) => Math.max(1, Math.floor((room.startN || room.players.length) / 3));
+U.destroyLimit = (room) => { const c = (room.settings && room.settings.destroyMax) | 0; return c > 0 ? c : Math.max(1, Math.floor((room.startN || room.players.length) / 3)); };
+// 횟수 제한이 있는 능력: 방 설정(settings.uses)으로 조절 (훔친 능력은 항상 1회)
+U.USE_KEYS = ['reporter', 'agitator', 'priest', 'angel', 'scientist', 'judge', 'soldier', 'madman', 'guardian'];
+U.maxUses = (room, p, key) => (p && p.loaning ? 1 : Math.max(1, ((room.settings.uses || {})[key]) | 0 || 1));
+U.usedCount = (p, key) => (p.s.uc || {})[key] || 0;
+U.useOne = (p, key) => { p.s.uc = p.s.uc || {}; p.s.uc[key] = (p.s.uc[key] || 0) + 1; };
+U.usesLeft = (room, p, key) => U.maxUses(room, p, key) - U.usedCount(p, key);
+// "(1회)" / "(남은 2/3회)" 같은 표시
+U.usesTag = (room, p, key) => { const m = U.maxUses(room, p, key); return m <= 1 ? '1회' : `남은 ${U.usesLeft(room, p, key)}/${m}회`; };
 
 // 내기꾼이 우승하려면 가위바위보로 이겨야 하는 사람 수: 게임 시작 인원의 5분의 1 (올림, 최소 1명)
 U.bettorNeed = (room) => Math.max(1, Math.ceil((room.startN || room.players.length) / 5));

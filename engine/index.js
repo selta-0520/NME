@@ -53,7 +53,7 @@ function meView(room, p) {
       me.predict = { open: room.phase === 'night' && room.day === 1, ids: room.players.filter((x) => x !== p).map((x) => x.id), guesses: p.guess || {} };
     }
   }
-  if (room.phase === 'confirm' && p.alive && p.role === 'judge' && !p.s.judgeUsed && !room.judgeVerdict && room.defense && room.defense.id !== p.id) me.judge = { open: true };
+  if (room.phase === 'confirm' && p.alive && p.role === 'judge' && U.usesLeft(room, p, 'judge') > 0 && !room.judgeVerdict && room.defense && room.defense.id !== p.id) me.judge = { open: true };
   if (room.phase === 'rps') {
     const m = RPS.matchOf(room, p);
     if (m) { const mine = m.b === p.id; const opp = U.byId(room, mine ? m.t : m.b); me.rps = { side: mine ? 'bettor' : 'target', opp: opp ? opp.name : '', pick: (mine ? m.bm : m.tm) || null }; }

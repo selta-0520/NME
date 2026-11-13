@@ -194,7 +194,7 @@ function resolveNight(room) {
         priv(p, `🔎 ${t.name}님의 직업 후보: ${list.map((k) => ROLE[k].name).join(' / ')} (이 중 하나가 진짜예요)`);
         U.touch(room, p, t); break;
       }
-      case 'guardian': t.s.voteImmune = day; priv(p, `🛡 ${t.name}님을 오늘 투표 후보에서 제외했습니다.`); U.touch(room, p, t); break;
+      case 'guardian': U.useOne(p, 'guardian'); t.s.voteImmune = day; priv(p, `🛡 ${t.name}님을 오늘 투표 후보에서 제외했습니다.`); U.touch(room, p, t); break;
       case 'witness': witnesses.push({ p, t }); U.touch(room, p, t); break;
       case 'executor': executors.push({ p, t }); U.touch(room, p, t); break;
       case 'bettor': U.touch(room, p, t); break; // 가위바위보는 밤이 끝날 때 따로 진행
@@ -240,7 +240,7 @@ function resolveNight(room) {
         break;
       case 'detective': p.s.detA = t.id; U.touch(room, p, t); break;
       case 'reporter':
-        p.s.reportUsed = true; p.s.report = { target: t.id, day: day + 1 };
+        U.useOne(p, 'reporter'); p.s.report = { target: t.id, day: day + 1 };
         priv(p, `📰 ${t.name}님에 대한 속보를 준비했습니다. 다음 날 아침에 공개됩니다.`);
         U.touch(room, p, t); break;
       case 'programmer':
@@ -254,14 +254,14 @@ function resolveNight(room) {
         addHeal(t, p); if (t.id === p.id) p.s.lastSelfHeal = day;
         U.touch(room, p, t); break;
       case 'angel':
-        p.s.angelUsed = true; p.s.blessT = t.id; t.blessed = true; t.blessedBy = p.id;
+        U.useOne(p, 'angel'); p.s.blessT = t.id; t.blessed = true; t.blessedBy = p.id;
         priv(p, `✨ ${t.name}님에게 성스러운 가호를 내렸습니다! (이번 판 동안 첫 공격 1번을 막아 줍니다)`);
         U.touch(room, p, t); break;
       case 'priest':
-        p.s.priestUsed = true; revives.push({ t, by: p, type: 'priest' }); break;
+        U.useOne(p, 'priest'); revives.push({ t, by: p, type: 'priest' }); break;
       case 'scientist':
         U.touch(room, p, t);
-        p.s.potionUsed = x.mode === 'heal' ? 'heal' : 'kill'; // 하나를 쓰면 나머지는 쓸 수 없다
+        U.useOne(p, 'scientist'); p.s.potionUsed = x.mode === 'heal' ? 'heal' : 'kill';
         if (x.mode === 'heal') { addHeal(t, p); priv(p, `⚗ ${t.name}님에게 살리는 물약을 사용했습니다. (이제 물약을 더 쓸 수 없습니다)`); }
         else { attacks.push({ kind: 'potion', by: p, t }); priv(p, `⚗ ${t.name}님에게 죽이는 물약을 사용했습니다. (이제 물약을 더 쓸 수 없습니다)`); }
         break;
@@ -279,7 +279,7 @@ function resolveNight(room) {
           break;
         }
         const fake = x.mode && x.mode !== 'real' && ROLE[x.mode] ? x.mode : null;
-        p.s.reportUsed = true; p.s.report = { target: t.id, day: day + 1, fake };
+        U.useOne(p, 'agitator'); p.s.report = { target: t.id, day: day + 1, fake };
         priv(p, `📰 ${t.name}님에 대한 속보를 준비했습니다.${fake ? ` 공개될 직업: "${U.roleName(fake)}" (거짓)` : ''} 다음 날 아침에 공개됩니다.`);
         U.touch(room, p, t); break;
       }
@@ -343,7 +343,7 @@ function resolveNight(room) {
     let fail = null;
     if (at.kind !== 'destroy') {
       if (at.kind === 'mafia' && (t.role === 'ghost' || t.role === 'hermit')) fail = 'immune';
-      else if (at.kind === 'mafia' && t.role === 'soldier' && !t.s.shieldUsed) { t.s.shieldUsed = true; fail = 'soldier'; }
+      else if (at.kind === 'mafia' && t.role === 'soldier' && U.usesLeft(room, t, 'soldier') > 0) { U.useOne(t, 'soldier'); fail = 'soldier'; }
       else if (isHealed(t, at.kind)) fail = 'heal';
     }
     if (!fail && t.blessed) { // 사제의 가호: 첫 공격 1번 무효 (공격 종류 무관)

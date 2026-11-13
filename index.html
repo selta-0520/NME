@@ -165,6 +165,7 @@
   .rps-btns button{flex:1;font-size:16px;padding:14px 6px}
   .rps-btns .rps-e{font-size:38px;line-height:1.1}
   /* 🎭 내 직업 패널 */
+  .numin{width:54px;text-align:center;padding:4px 2px;margin:0 4px}
   #rolebar{flex:0 0 auto;padding:7px 14px 8px;background:#161a26;border-bottom:1px solid var(--line);border-left:5px solid var(--line);cursor:pointer;max-height:42dvh;overflow:auto}
   #rolebar.mafia{border-left-color:var(--mafia);background:linear-gradient(90deg,#2d1823,#161a26 70%)}
   #rolebar.citizen{border-left-color:var(--citizen);background:linear-gradient(90deg,#15263d,#161a26 70%)}
@@ -391,7 +392,7 @@ function maybeTour() {
     step('1.', '위쪽 "내 직업" 줄을 눌러 능력 설명을 먼저 읽어 보세요. (넓은 화면에서는 옆에 계속 보여요) 팀마다 이기는 조건이 달라요.'),
     step('2.', '🌙 밤에는 능력이 있으면 화면의 버튼으로 사람을 골라요. 능력이 없으면 기다리면 돼요.'),
     step('3.', '☀️ 낮에는 채팅으로 의심되는 사람과 이유를 이야기해요. 아래 "빠른 반응" 버튼을 써도 돼요.'),
-    step('4.', '🗳 투표에서 사람을 고르면 끝이에요. 모르겠으면 기권도 괜찮아요.'),
+    step('4.', '🗳 투표에서 사람을 고르면 끝이에요. (방 설정에서 기권을 켜면 기권도 할 수 있어요.)'),
     step('💡', '직업이 헷갈리면 위쪽 📖 설명서의 "직업 도감"을 보세요. 사람 이름을 누르면 📝 직업 메모를 남길 수 있어요.'),
     h('button', { style: 'margin-top:12px', onclick: () => { try { localStorage.setItem('nme_tour', '1'); } catch (e) { /* */ } closeModal(); } }, '알겠어요, 시작할게요'));
   settingsOpen = false; $('#modal').hidden = false;
@@ -633,6 +634,7 @@ function renderTop() {
   top.append(h('div', { class: 'title' }, PHASE_TITLE[st.phase]()));
   if (st.phase === 'lobby') top.append(h('div', { class: 'timer', style: 'letter-spacing:3px' }, st.code));
   else if (st.endsAt) top.append(h('div', { class: 'timer', id: 'timer' }, fmt(remaining())));
+  if (st.phase !== 'lobby') top.append(h('button', { class: 'hbtn', onclick: openSettings }, '⚙️ 설정'));
   top.append(h('button', { class: 'hbtn', onclick: openGuide }, '📖 설명서'));
   top.append(h('button', { class: 'hbtn', onclick: toggleMusicPop }, Music.label()));
 }
@@ -707,7 +709,7 @@ function hintText() {
     return '🌙 밤입니다. 지금 쓸 수 있는 능력이 없어요. 아침을 기다려 주세요.' + extra;
   }
   if (st.phase === 'rps') return me.rps ? '✊ 가위바위보! 시간 안에 가위·바위·보 중 하나를 고르세요.' : '✊ 내기꾼의 가위바위보가 진행 중이에요.';
-  if (st.phase === 'speak') return me.chat && me.chat.ch ? '⚔️ 당신의 추가 발언 시간이에요! 아래 채팅으로 설득하세요.' : '⚔️ 검사·변호사의 추가 발언을 듣는 중이에요.';
+  if (st.phase === 'speak') return me.chat && me.chat.ch ? '⚔️ 당신의 추가 발언 시간이에요! 아래 채팅으로 설득하세요.' : '⚔️ 추가 발언을 듣는 중이에요.';
   if (st.phase === 'day' && st.will) return `📜 ${st.will.with}님과 단둘이 대화하는 중이에요! (아래 채팅은 둘에게만 보여요)`;
   if (st.phase === 'defense') return me.chat && me.chat.ch ? '🛡 당신이 처형 후보예요! 마지막으로 하고 싶은 말을 채팅으로 하세요.' : `🛡 ${st.defense ? st.defense.name : ''}님의 최후의 반론을 들어 보세요.`;
   if (st.phase === 'confirm') return (st.confirm && st.confirm.canVote) ? '⚖️ 처형에 찬성하나요, 반대하나요? (찬성이 더 많아야 처형, 동점이면 무효)' : '⚖️ 찬반투표 중이에요.';
@@ -907,7 +909,7 @@ function renderMain() {
         h('div', { class: 'hint' }, isT ? '지금은 나만 말할 수 있어요. 아래 채팅으로 억울함을 호소하세요!' : '처형 후보가 말하는 중이에요. 잘 듣고 이어지는 찬반투표에서 결정하세요.'));
     } else if (st.phase === 'speak') {
       const sp = st.speaker || {}; const isMe = sp.id === st.meId;
-      box.append(h('div', { class: 'big' }, `⚔️ ${ROLE[sp.role] ? ROLE[sp.role].name : ''} ${sp.name || ''}님의 추가 발언`),
+      box.append(h('div', { class: 'big' }, `⚔️ ${sp.name || ''}님의 추가 발언`),
         h('div', { class: 'hint' }, isMe ? '지금은 나만 말할 수 있어요. 아래 채팅으로 모두를 설득하세요!' : `${st.defense.name}님의 처형 여부를 두고 발언 중이에요. 잘 듣고 이어지는 찬반투표에서 결정하세요.`));
     } else {
       const c = st.confirm || {};
@@ -933,7 +935,7 @@ function renderMain() {
   if (st.phase === 'vote' && me.alive && me.canVote) {
     const skipped = me.vote === 'skip';
     main.append(h('div', { class: 'actions' },
-      h('button', { class: skipped ? '' : 'ghost', onclick: () => act('vote', { target: skipped ? null : 'skip' }) }, skipped ? '✔ 기권함 (누르면 취소)' : '기권'),
+      !st.settings.abstain ? null : h('button', { class: skipped ? '' : 'ghost', onclick: () => act('vote', { target: skipped ? null : 'skip' }) }, skipped ? '✔ 기권함 (누르면 취소)' : '기권'),
       h('div', { class: 'hint', style: 'align-self:center;flex:2' }, `투표 ${st.voted}/${st.eligible}명 완료`)));
   }
 
@@ -987,7 +989,7 @@ function renderSpectator(main) {
     endExtras(main);
   }
   if (st.phase === 'vote') main.append(h('div', { class: 'hint' }, `투표 ${st.voted}/${st.eligible}명 완료`));
-  if (st.defense && (st.phase === 'defense' || st.phase === 'speak' || st.phase === 'confirm')) main.append(h('div', { class: 'hint' }, st.phase === 'defense' ? `🛡 ${st.defense.name}님의 최후의 반론` : st.phase === 'speak' ? `⚔️ 검사·변호사 추가 발언` : `⚖️ ${st.defense.name}님 처형 찬반투표 중`));
+  if (st.defense && (st.phase === 'defense' || st.phase === 'speak' || st.phase === 'confirm')) main.append(h('div', { class: 'hint' }, st.phase === 'defense' ? `🛡 ${st.defense.name}님의 최후의 반론` : st.phase === 'speak' ? `⚔️ 추가 발언` : `⚖️ ${st.defense.name}님 처형 찬반투표 중`));
   const grid = h('div', { class: 'grid' });
   for (const q of st.players) {
     const c = playerCard(q, {});
@@ -1039,6 +1041,7 @@ function copy(text) {
 
 /* ------------------------------------------------ 세부설정 */
 const TEAM_COLOR = { mafia: 'var(--mafia)', citizen: 'var(--citizen)', neutral: 'var(--neutral)' };
+const canEditSettings = () => isHost() && st.phase === 'lobby';
 function openSettings() { settingsOpen = true; buildSettings(); $('#modal').hidden = false; }
 function closeSettings() { settingsOpen = false; $('#modal').hidden = true; }
 const closeModal = closeSettings;
@@ -1057,6 +1060,11 @@ function numField(key, label, unit) {
     h('div', null, label, h('div', { class: 'note' }, `${lo}~${hi}${unit}`)),
     h('input', { type: 'number', 'data-key': key, min: lo, max: hi, onchange: (e) => sendPatch({ [key]: Number(e.target.value) }) }));
 }
+const USE_FIELDS = [['reporter', '📰 기자 속보'], ['agitator', '📰 선동가 속보'], ['priest', '⛪ 성직자 부활'], ['angel', '✨ 사제 가호'], ['scientist', '⚗ 과학자 물약'], ['judge', '⚖️ 판사 판결'], ['soldier', '🛡 군인 방어 (공격 버티기)'], ['madman', '🌀 광인 처형 방어'], ['guardian', '🛡 수호자 지목']];
+function useField(key, label) {
+  return h('div', { class: 'field' }, h('div', null, label, h('div', { class: 'note' }, '1~5번')),
+    h('input', { type: 'number', inputmode: 'numeric', 'data-use': key, min: 1, max: 5, onchange: (e) => sendPatch({ uses: { [key]: Number(e.target.value) } }) }));
+}
 function sendPatch(patch) { act('settings', { patch }); }
 // 거지와 부자는 "거지 & 부자" 한 묶음: 한 번 고르면 둘이 같이 선택돼요
 const PAIR2 = { beggar: 'rich', prosecutor: 'lawyer' }; // 한 묶음으로 배정되는 직업 쌍
@@ -1072,13 +1080,14 @@ function forcedPatch() {
 const isPairRich = (r) => Object.values(PAIR2).includes(r.key);
 function stepper(key, kind) {
   const cap = meta.caps[key] || 1;
-  const val = h('b', { 'data-cnt': kind + ':' + key }, '0');
-  const go = (d) => {
-    if (!isHost()) return;
+  const set = (nv) => {
+    if (!canEditSettings()) return;
     const s = st.settings, cur = (kind === 'min' ? s.roleMin : s.roleMax)[key] | 0;
-    const nv = Math.max(0, Math.min(cap, cur + d));
-    if (nv !== cur) sendPatch({ [kind === 'min' ? 'roleMin' : 'roleMax']: { [key]: nv } });
+    nv = Math.max(0, Math.min(cap, Math.round(Number(nv)) || 0));
+    if (nv !== cur) sendPatch({ [kind === 'min' ? 'roleMin' : 'roleMax']: { [key]: nv } }); else syncSettings(true);
   };
+  const val = h('input', { type: 'number', inputmode: 'numeric', class: 'numin', min: 0, max: cap, 'data-cnt': kind + ':' + key, value: '0', onchange: (e) => set(e.target.value) });
+  const go = (d) => set(((kind === 'min' ? st.settings.roleMin : st.settings.roleMax)[key] | 0) + d);
   return h('span', { class: 'step' }, kind === 'min' ? '최소' : '최대',
     h('button', { class: 'ghost', 'data-step': kind + ':' + key, onclick: () => go(-1) }, '−'), val,
     h('button', { class: 'ghost', 'data-step': kind + ':' + key, onclick: () => go(1) }, '+'));
@@ -1091,10 +1100,10 @@ function roleDescEls(r, cls) {
 }
 function buildSettings() {
   const sheet = $('#sheet'); sheet.innerHTML = '';
-  const host = isHost();
+  const host = canEditSettings();
   sheet.append(
     h('div', { class: 'row' }, h('h2', { class: 'grow' }, '⚙️ 세부설정'), h('button', { class: 'ghost', onclick: closeSettings }, '닫기')),
-    h('div', { class: 'note' }, host ? '방장만 바꿀 수 있어요. 바꾸면 바로 저장됩니다.' : '방장이 정한 설정을 보여줘요. (수정은 방장만 가능)'),
+    h('div', { class: 'note' }, host ? '방장만 바꿀 수 있어요. 숫자는 직접 입력할 수 있고, 바꾸면 바로 저장됩니다.' : (isHost() ? '게임 중에는 설정을 바꿀 수 없어요. (확인만 가능)' : '방장이 정한 설정을 보여줘요. (확인만 가능, 수정은 방장만 가능)')),
     h('h3', null, '⏱ 시간 설정'),
     numField('nightSec', '🌙 밤 시간', '초'),
     numField('daySec', '☀️ 낮(토론) 시간', '초'),
@@ -1113,7 +1122,13 @@ function buildSettings() {
     numField('citizenSize', '시민 팀 총 인원 (0 = 자동)', '명'),
     h('h3', null, '🎰 도박사'),
     numField('gamblerHits', '우승에 필요한 적중 횟수', '번'),
+    h('h3', null, '🔢 능력 사용 횟수'),
+    h('div', { class: 'note' }, '횟수 제한이 있는 능력을 몇 번까지 쓸 수 있는지 정해요. (기본 1회)'),
+    ...USE_FIELDS.map(([k, label]) => useField(k, label)),
+    numField('destroyMax', '💥 파괴자 파괴 횟수 (0 = 자동: 시작 인원 ÷ 3)', '번'),
     h('h3', null, '기타'),
+    h('label', { class: 'field' }, h('span', null, '투표 기권 허용 (기본 꺼짐)'),
+      h('input', { type: 'checkbox', 'data-key': 'abstain', style: 'width:20px;height:20px', onchange: (e) => sendPatch({ abstain: e.target.checked }) })),
     h('label', { class: 'field' }, h('span', null, '자기 자신에게 투표 허용'),
       h('input', { type: 'checkbox', 'data-key': 'selfVote', style: 'width:20px;height:20px', onchange: (e) => sendPatch({ selfVote: e.target.checked }) })),
     h('label', { class: 'field' }, h('span', null, '죽으면 직업 공개'),
@@ -1167,7 +1182,11 @@ function buildSettings() {
 function syncSettings(force) {
   const sheet = $('#sheet');
   const s = st.settings;
-  const host = isHost();
+  const host = canEditSettings();
+  for (const inp of sheet.querySelectorAll('input[data-use]')) {
+    if (!force && document.activeElement === inp) continue;
+    inp.value = (s.uses || {})[inp.getAttribute('data-use')] || 1; inp.disabled = !host;
+  }
   for (const inp of sheet.querySelectorAll('input[data-key]')) {
     if (!force && document.activeElement === inp) continue;
     const k = inp.getAttribute('data-key');
@@ -1187,7 +1206,8 @@ function syncSettings(force) {
   }
   for (const el of sheet.querySelectorAll('[data-cnt]')) {
     const [kind, key] = el.getAttribute('data-cnt').split(':');
-    el.textContent = String((kind === 'min' ? s.roleMin : s.roleMax)[key] | 0);
+    if (document.activeElement !== el) el.value = String((kind === 'min' ? s.roleMin : s.roleMax)[key] | 0);
+    el.disabled = !host || !s.enabledRoles.includes(key);
   }
   for (const b of sheet.querySelectorAll('button[data-step]')) b.disabled = !host || !s.enabledRoles.includes(b.getAttribute('data-step').split(':')[1]);
   for (const row of sheet.querySelectorAll('.rrow')) {
@@ -1271,7 +1291,7 @@ function buildGuide() {
       P('1일차 ', K('밤'), '부터 시작해요. 밤 → 아침(토론) → 투표 → 밤 … 순서로 돌아가요.'),
       P(K('밤'), ': 능력이 있는 직업은 카드를 눌러 대상을 골라요. 마피아는 팀끼리 한 명을 정해 죽여요.'),
       P(K('아침'), ': 밤에 일어난 일이 알려지고 자유롭게 토론해요.'),
-      P(K('투표'), ': 처형할 사람을 골라요. 최다 득표자가 ', K('한 명일 때만'), ' 처형되고, 동률이면 아무도 처형되지 않아요. 기권도 가능해요. 방 설정에 따라 자기 자신에게도 투표할 수 있어요. 투표할 수 있는 모두가 투표하면 바로 개표해요.'),
+      P(K('투표'), ': 처형할 사람을 골라요. 최다 득표자가 ', K('한 명일 때만'), ' 처형되고, 동률이면 아무도 처형되지 않아요. 방 설정에서 기권을 켜면 기권도 할 수 있어요. 방 설정에 따라 자기 자신에게도 투표할 수 있어요. 투표할 수 있는 모두가 투표하면 바로 개표해요.'),
       P(K('테러리스트'), '가 투표로 처형되면 잠깐(15초) 동안 함께 죽을 사람을 고를 수 있어요.'),
       P(K('아침 시간 조절'), ': 살아 있는 사람은 아침마다 한 번, "10초 줄이기"와 "10초 늘리기" 중 하나를 쓸 수 있어요. 쓰면 모두에게 알려져요.'),
       h('h3', null, '🏆 승리 조건'),

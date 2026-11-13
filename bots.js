@@ -66,8 +66,8 @@ function syncSys(room) {
     else if ((r = /^📰 속보! (.+?)님의 직업은 "(.+?)"입니다/.exec(t))) { const q = byName(room, r[1]); if (q && ROLE_BY_NAME[r[2]]) A.pubRole[q.id] = ROLE_BY_NAME[r[2]]; }
     else if ((r = /^🏛 정치인 (.+?)님은/.exec(t))) { const q = byName(room, r[1]); if (q) A.pubRole[q.id] = 'politician'; }
     else if ((r = /^🌀 (.+?)님은 처형 투표에서/.exec(t))) { const q = byName(room, r[1]); if (q) A.pubRole[q.id] = 'madman'; }
-    else if ((r = /^🛡 경호원이 지키던 (.+?)님이 공격으로 사망했습니다! 공격한 사람은 (.+?)님입니다/.exec(t))) {
-      const by = byName(room, r[2]); if (by) A.exposed = (A.exposed || {}), A.exposed[by.id] = (A.exposed[by.id] || 0) + 1;
+    else if ((r = /^🛡 경호원 (.+?)님이 (.+?)님 대신 공격을 받았습니다! 공격한 사람은 (.+?)님입니다/.exec(t))) {
+      const by = byName(room, r[3]); if (by) A.exposed = (A.exposed || {}), A.exposed[by.id] = (A.exposed[by.id] || 0) + 1;
     } else if (t.startsWith('🃏')) { A.claims = []; A.res = []; A.acc = []; A.vouch = []; A.intent = {}; for (const q of room.players) if (q.ai) { q.ai.checks = {}; q.ai.known = {}; q.ai.hint = {}; } }
     else if ((r = /^📜 섞이기 전의 원래 직업: (.+)$/.exec(t))) { /* 직업이 모두 바뀌었으니 예전 정보는 버린다 (위에서 이미 초기화) */ }
   }
@@ -129,6 +129,8 @@ function cred(room, me, by, role) {
 }
 const roleCapMulti = (room, role) => ((room.settings.roleMax && room.settings.roleMax[role]) || 1) > 1;
 
+// 물타기 판별: 이 지목은 내가 먼저 지목당한 뒤 맞받아친 것인가 (같은 날, 근거 없이)
+function isRetaliation(A, a) { return A.acc.some((a1) => a1.target === a.by && a1.by !== a.by && a1.n < a.n && a1.day === a.day); }
 // 이 사람이 마피아일 가능성 점수 (높을수록 의심, 내가 확실히 아는 팀원은 -1000)
 function sus(room, me, c, o) {
   o = o || {};
@@ -168,7 +170,7 @@ function sus(room, me, c, o) {
       const q = U.byId(room, a.by);
       if (q && q.alive && !accusers.has(a.by)) {
         accusers.add(a.by);
-        if (social) { const w = clamp(1 - sus(room, me, q, { noSocial: true }) / 120, 0.2, 2); soc += (b.checks[a.by] === 'mafia' ? -10 : knownMate(me, q) ? 0 : 6 * w * (a.ev ? 1.6 : 1 - 0.35 * W)) * T; }
+        if (social) { const w = clamp(1 - sus(room, me, q, { noSocial: true }) / 120, 0.2, 2); const rt = !a.ev && isRetaliation(A, a) ? 0.2 : 1; soc += (b.checks[a.by] === 'mafia' ? -10 : knownMate(me, q) ? 0 : 6 * w * rt * (a.ev ? 1.6 : 1 - 0.35 * W)) * T; }
       } else if (q && !q.alive && A.dead[a.by] && A.dead[a.by].phase === 'night' && social) soc += 8 * T; // 밤에 죽은 사람이 의심하던 사람
     }
     if (a.by === c.id) {
@@ -188,7 +190,7 @@ function sus(room, me, c, o) {
     }
     s += Math.min(base, 3 + Math.round(W)) * (7 + 3 * W) * T;
   }
-  if (social && W > 0) { // 물타기: 지목당한 뒤 근거 없이 맞받아 몰아가는 사람
+  if (social) { // 물타기: 지목당한 뒤 근거 없이 맞받아 몰아가는 사람
     let defl = 0;
     for (const a2 of A.acc) {
       if (a2.by !== c.id || a2.ev || a2.target === me.id) continue;
@@ -197,7 +199,7 @@ function sus(room, me, c, o) {
       const t2 = U.byId(room, a2.target); if (!t2 || !t2.alive || knownMate(me, t2) || b.checks[t2.id] === 'mafia') continue;
       defl += (a2.target === hit.by ? 1 : 0.6) * (hit.ev ? 0.4 : 1);
     }
-    s += Math.min(defl, 2) * 8 * W * T;
+    s += Math.min(defl, 2) * 16 * (0.5 + W) * T;
   }
   if (social && W > 0) { // 지난 투표 기록: 무고한 사람 처형을 밀었던 사람 / 마피아를 잡아낸 사람
     const v = A.vrec[c.id];
@@ -350,7 +352,7 @@ function botNight(room, p) {
     act(room, p, { type: 'predict', guesses });
     return;
   }
-  if (p.role === 'agitator' && p.contacted && !p.s.reportUsed) { // 선동가: 믿음직한 사람을 "마피아"로 속여 공개
+  if (p.role === 'agitator' && p.contacted && U.usesLeft(room, p, 'agitator') > 0) { // 선동가: 믿음직한 사람을 "마피아"로 속여 공개
     const o2 = E.AB.nightOptions(room, p);
     if (o2 && o2.targets.length && !chance(L.skip)) {
       const cs = o2.targets.map((id) => U.byId(room, id)).filter(Boolean);
@@ -425,6 +427,13 @@ function reasonFor(room, p, t) {
   if (n >= 2) return ' 여러 사람이 의심하고 있어요.';
   if (room.day >= 2 && !(A.talk[t.id] > 0)) return ' 계속 말이 없어요.';
   return '';
+}
+// 뚜렷한 근거가 없을 때도 이유를 밝힌다 (근거 없이 몰아가는 사람 / 그냥 의심)
+function voteReasonFallback(room, p, t) {
+  const A = ai(room);
+  const base = A.acc.some((a) => a.by === t.id && !a.ev && a.target !== p.id);
+  if (base) return ' 근거도 없이 다른 사람을 몰아갔어요.';
+  return ' 확실한 근거는 없지만 지금 가장 마음에 걸리는 사람이에요.';
 }
 function accuseLine(room, p, t) {
   return `${rnd([`${t.name}님이 수상해요.`, `저는 ${t.name}님을 의심해요.`, `${t.name}님 행동이 좀 이상하지 않아요?`])}${reasonFor(room, p, t)}`;
@@ -619,7 +628,7 @@ function botSpeak(room, p) {
     if (sc > (L.think >= 0.9 ? 12 : 8) - persona(p).sus) {
       const same = b.lastTop === t.id && b.lastTopDay === room.day;
       if (same) {
-        if (b.intentSaid !== room.day && chance(L.intent)) { b.intentSaid = room.day; return void say(room, p, `이번엔 ${t.name}님에게 투표할 거예요.`, { intent: t.id }); }
+        if (b.intentSaid !== room.day && chance(L.intent)) { b.intentSaid = room.day; return void say(room, p, `이번엔 ${t.name}님에게 투표할 거예요.${reasonFor(room, p, t) || voteReasonFallback(room, p, t)}`, { intent: t.id }); }
       } else {
         b.lastTop = t.id; b.lastTopDay = room.day;
         return void say(room, p, accuseLine(room, p, t), { acc: t.id });
@@ -666,7 +675,7 @@ function botConfirm(room, p) {
   const T = room.defense && U.byId(room, room.defense.id);
   if (!T || T === p) return;
   if (room.judgeOnly) { // 최후의 반론이 꺼진 판: 판사 봇만 가끔 판결
-    if (p.role === 'judge' && !p.s.judgeUsed && chance(0.4)) { sync(room, p); act(room, p, { type: 'judge', verdict: chance(Math.max(0.12, Math.min(0.9, 0.55 + sus(room, p, T) / 120))) ? 'yes' : 'no' }); }
+    if (p.role === 'judge' && U.usesLeft(room, p, 'judge') > 0 && !room.judgeVerdict && chance(0.4)) { sync(room, p); act(room, p, { type: 'judge', verdict: chance(Math.max(0.12, Math.min(0.9, 0.55 + sus(room, p, T) / 120))) ? 'yes' : 'no' }); }
     return;
   }
   if (!E.confirmVoters(room).includes(p)) return;
@@ -678,7 +687,7 @@ function botConfirm(room, p) {
   else if (mafiaSide(p) && knownMate(p, T)) yes = chance(L.mistake);
   else if (room.votes[p.id] === T.id) yes = chance(0.92);
   else { const W = L.wise || 0; const sc = W >= 0.7 ? 0.6 * sus(room, p, T, { noSocial: true }) + 0.4 * sus(room, p, T) : sus(room, p, T); yes = chance(Math.max(0.12, Math.min(0.93, 0.58 + sc / 120))); }
-  if (p.role === 'judge' && !p.s.judgeUsed && chance(0.55)) { act(room, p, { type: 'judge', verdict: yes ? 'yes' : 'no' }); return; } // 판사: 가끔 직접 판결
+  if (p.role === 'judge' && U.usesLeft(room, p, 'judge') > 0 && !room.judgeVerdict && chance(0.55)) { act(room, p, { type: 'judge', verdict: yes ? 'yes' : 'no' }); return; } // 판사: 가끔 직접 판결
   act(room, p, { type: 'confirm', choice: yes ? 'yes' : 'no' });
 }
 function botVote(room, p) {
@@ -686,7 +695,7 @@ function botVote(room, p) {
   sync(room, p);
   botVoteAbility(room, p);
   if (!E.canVote(room, p)) return;
-  if (chance(L.skip)) return void act(room, p, { type: 'vote', target: 'skip' });
+  if (room.settings.abstain && chance(L.skip)) return void act(room, p, { type: 'vote', target: 'skip' });
   const tally = tallyOf(room);
   const alive = U.alive(room);
   const mates = alive.filter((x) => knownMate(p, x));
@@ -711,7 +720,7 @@ function botVote(room, p) {
     }
   }
   // 기권 판단: 단서가 너무 없으면 괜한 처형을 피한다 (마을 팀)
-  const scored = cands.map((c) => ({ c, s: sus(room, p, c, { tally }) + Math.random() * L.noise }));
+  const scored = cands.map((c) => ({ c, s: sus(room, p, c, { tally }) + Math.random() * L.noise * 0.4 })); // 투표는 판단에 무작위를 덜 섞는다
   scored.sort((a, b) => b.s - a.s);
   let top = scored[0];
   if (mafiaSide(p)) { // 마피아는 마을이 쏠리는 쪽 + 위협적인 사람
@@ -720,9 +729,10 @@ function botVote(room, p) {
     if (L.coord && !A.plan['v' + room.day]) A.plan['v' + room.day] = top.c.id;
   } else {
     // 마을은 표가 갈라지면 마피아가 원하는 사람이 처형된다: 단서가 약해도 가장 의심스러운 사람에게 표를 모은다
+    // (결백하다는 근거가 있는 사람을 분위기만으로 따라 찍지는 않는다)
     if (L.consensus > 0 && chance(L.consensus)) {
       const lead = Object.entries(tally).sort((a, b) => b[1] - a[1])[0];
-      if (lead && lead[1] >= 2) { const lc = scored.find((x) => x.c.id === lead[0]); if (lc && lc.s >= top.s - 40 * (1 - 0.6 * (L.wise || 0))) top = lc; }
+      if (lead && lead[1] >= 2) { const lc = scored.find((x) => x.c.id === lead[0]); if (lc && lc.s >= top.s - 40 * (1 - 0.6 * (L.wise || 0)) && (L.think < 0.5 || sus(room, p, lc.c, { noSocial: true }) > -25)) top = lc; }
     }
   }
   act(room, p, { type: 'vote', target: top.c.id });
