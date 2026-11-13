@@ -16,6 +16,7 @@ function assignRoles(room) {
   if (!enabled.has('beggar') || !enabled.has('rich')) { enabled.delete('beggar'); enabled.delete('rich'); }
   if (!enabled.has('prosecutor') || !enabled.has('lawyer')) { enabled.delete('prosecutor'); enabled.delete('lawyer'); }
   const skipped = [], notes = [];
+  if (!s.finalDefense && enabled.has('prosecutor')) { enabled.delete('prosecutor'); enabled.delete('lawyer'); notes.push('ℹ️ 최후의 반론이 꺼져 있어 검사·변호사는 나오지 않아요.'); }
 
   // 직업별 [최소, 최대] (묶음 개수 기준)
   const rng = (key) => {

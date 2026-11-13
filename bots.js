@@ -663,7 +663,12 @@ function botDefense(room, p) {
 // 찬반투표: 내가 찍은 후보면 찬성, 아니면 의심 정도에 따라 (마피아는 팀원이면 반대)
 function botConfirm(room, p) {
   const T = room.defense && U.byId(room, room.defense.id);
-  if (!T || T === p || !E.confirmVoters(room).includes(p)) return;
+  if (!T || T === p) return;
+  if (room.judgeOnly) { // 최후의 반론이 꺼진 판: 판사 봇만 가끔 판결
+    if (p.role === 'judge' && !p.s.judgeUsed && chance(0.4)) { sync(room, p); act(room, p, { type: 'judge', verdict: chance(Math.max(0.12, Math.min(0.9, 0.55 + sus(room, p, T) / 120))) ? 'yes' : 'no' }); }
+    return;
+  }
+  if (!E.confirmVoters(room).includes(p)) return;
   sync(room, p);
   const L = lv(room, p);
   let yes;

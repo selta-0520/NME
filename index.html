@@ -916,7 +916,7 @@ function renderMain() {
         box.append(h('div', { class: 'confirm-btns' },
           h('button', { class: c.mine === 'yes' ? '' : 'ghost', onclick: () => act('confirm', { choice: c.mine === 'yes' ? null : 'yes' }) }, c.mine === 'yes' ? '👍 찬성 ✔' : '👍 찬성'),
           h('button', { class: c.mine === 'no' ? '' : 'ghost', onclick: () => act('confirm', { choice: c.mine === 'no' ? null : 'no' }) }, c.mine === 'no' ? '👎 반대 ✔' : '👎 반대')));
-      } else box.append(h('div', { class: 'hint' }, isT ? '당신의 처형 여부를 다른 사람들이 투표하고 있어요.' : '지금은 투표할 수 없어요.'));
+      } else box.append(h('div', { class: 'hint' }, st.judgeOnly ? '⚖️ 판사에게 판결할 기회가 주어졌어요. 판결이 없으면 그대로 처형돼요.' : isT ? '당신의 처형 여부를 다른 사람들이 투표하고 있어요.' : '지금은 투표할 수 없어요.'));
       if (me.judge) box.append(h('div', { class: 'hint', style: 'margin:12px 0 6px' }, '⚖️ 판사 능력 (1회용): 투표와 상관없이 처형 여부를 직접 결정해요. 쓰면 판사의 정체가 공개돼요.'),
         h('div', { class: 'confirm-btns' },
           h('button', { class: 'danger', 'data-judge': 'yes', onclick: () => act('judge', { verdict: 'yes' }) }, '🔨 처형 확정'),

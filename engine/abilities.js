@@ -37,7 +37,7 @@ function nightOptions(room, p, modeOverride) {
     case 'inspector': return o('🔎 직업 후보를 볼 사람', others);
     case 'witness': return o('👁 공격받았는지 살필 사람', others);
     case 'executor': return o('📜 유언을 들을 사람 (그 사람이 오늘 밤 죽으면)', others);
-    case 'poisoner': return p.contacted ? o('🧪 독을 걸 사람 (다음 밤에 죽어요)', others.filter((x) => !U.inMafiaChat(x))) : o('🤝 마피아인지 확인할 사람 (마피아면 접선)', others);
+    case 'poisoner': return p.contacted ? o('🧪 독을 걸 사람 (하루 뒤 아침에 죽어요)', others.filter((x) => !U.inMafiaChat(x))) : o('🤝 마피아인지 확인할 사람 (마피아면 접선)', others);
     case 'bettor': return o('✊ 가위바위보를 할 사람', others.filter((x) => !(p.s.beaten || []).includes(x.id)));
     case 'bodyguard': return o('🛡 지킬 사람', others);
     case 'destroyer': {
@@ -223,7 +223,7 @@ function infoLines(room, p) {
     case 'soldier': L.push(p.s.shieldUsed ? '🛡 방어는 이미 사용했어요.' : '🛡 마피아의 공격을 1번 버텨요.'); break;
     case 'fugitive': L.push(p.s.escaped ? '🏃 도망쳤어요. 이제 투표할 수 없어요.' : '🏃 처형을 1번 피할 수 있어요.'); break;
     case 'madman': L.push(p.s.shieldUsed ? '🌀 처형 방어 사용 완료' : '🌀 처형 투표를 1번 견뎌요.'); break;
-    case 'bodyguard': L.push('🛡 지킨 사람이 공격으로 죽으면 모두에게 공격한 사람이 알려져요.'); break;
+    case 'bodyguard': L.push('🛡 지킨 사람이 공격받으면 내가 대신 공격을 받고, 공격한 사람의 정체가 모두에게 공개돼요.'); break;
     case 'doctor': if (p.s.lastSelfHeal === day - 1 && room.phase === 'night') L.push('💉 어젯밤 자신을 치료해서 오늘은 자신을 고를 수 없어요.'); break;
     case 'couple': { const m = other('couple'); if (m) L.push(`💕 커플: ${m.name}${m.alive ? '' : ' (사망)'}`); break; }
     case 'beggar': L.push(p.s.met ? '🎉 부자를 만났어요! 12~17초마다 채팅해야 해요. (안 하면 "한푼 줍쇼"가 자동 전송) 2일 뒤 둘 다 살아있으면 우승!' : '🙏 모든 직업을 알지만 말하거나 투표할 수 없어요.'); break;
@@ -234,7 +234,7 @@ function infoLines(room, p) {
     case 'lawyer': { const m = other('prosecutor'); L.push(`⚖ 최후의 반론 뒤 검사 다음으로 추가 발언을 하고, 찬반투표에서 반대가 2표예요.${m ? ` 검사: ${m.name}${m.alive ? '' : ' (사망)'}` : ''}`); break; }
     case 'witness': L.push('👁 밤마다 1명을 살펴서 그 사람이 공격받았다면 공격자 후보 3명을 알 수 있어요.'); break;
     case 'executor': L.push('📜 지목한 사람이 밤에 죽으면 직업을 알고, 아침에 10초 동안 단둘이 대화할 수 있어요.'); break;
-    case 'poisoner': L.push(p.contacted ? '🧪 밤마다 1명에게 독을 걸어요. 중독된 사람은 다음 밤에 죽고, 그 밤에 치료받으면 살아나요.' : '🤝 밤에 마피아를 찾아 접선하세요. 접선하면 독을 걸 수 있어요.'); break;
+    case 'poisoner': L.push(p.contacted ? '🧪 밤마다 1명에게 독을 걸어요. 중독된 사람은 하루 뒤 아침에 죽고(2일차 밤에 걸면 3일차 낮), 그 사이 밤에 치료받으면 살아나요.' : '🤝 밤에 마피아를 찾아 접선하세요. 접선하면 독을 걸 수 있어요.'); break;
     case 'bettor': { const need = U.bettorNeed(room); const won = (p.s.beaten || []).map((i) => U.byId(room, i)).filter(Boolean); L.push(`✊ 가위바위보 승리 ${(p.s.beaten || []).length}/${need}명${won.length ? ` (이긴 사람: ${U.names(won)})` : ''} — 이미 이긴 사람에게는 다시 도전할 수 없어요.`); break; }
     case 'madam': L.push('💋 투표할 때 선택한 사람이 유혹당해요. (마피아를 고르면 접선)'); break;
     case 'doppelganger': if (p.s.disguise) L.push(`🎭 지금 "${U.roleName(p.s.disguise)}"(으)로 보여요.`); break;

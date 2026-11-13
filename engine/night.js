@@ -204,8 +204,8 @@ function resolveNight(room) {
           break;
         }
         t.s.poison = { day, by: p.id };
-        priv(p, `🧪 ${t.name}님에게 독을 걸었습니다. 다음 밤에 죽어요. (그 밤에 치료받으면 살아나요)`);
-        priv(t, '🧪 몸이 이상합니다… 독에 중독된 것 같아요! 다음 밤까지 치료받지 못하면 죽습니다.');
+        priv(p, `🧪 ${t.name}님에게 독을 걸었습니다. ${day + 1}일차 낮에 죽어요. (그 사이 밤에 치료받으면 살아나요)`);
+        priv(t, `🧪 몸이 이상합니다… 독에 중독된 것 같아요! 오늘 밤 안에 치료받지 못하면 ${day + 1}일차 낮에 죽습니다.`);
         U.touch(room, p, t); break;
       }
       case 'police':
@@ -332,6 +332,8 @@ function resolveNight(room) {
       const partner = U.alive(room).find((x) => x !== t && x.role === 'couple');
       if (partner) { t = partner; if (at.by && !attacked[t.id]) attacked[t.id] = at.by; }
     }
+    const g = guard[t.id] || guard[at.t.id]; // 경호원: 지키던 사람 대신 공격을 받고, 공격자의 정체를 밝힌다
+    if (g && g.alive && g !== t && at.by) { guardNotes.push({ g, victim: t, by: at.by }); t = g; }
     let fail = null;
     if (at.kind !== 'destroy') {
       if (at.kind === 'mafia' && (t.role === 'ghost' || t.role === 'hermit')) fail = 'immune';
@@ -348,9 +350,7 @@ function resolveNight(room) {
       if (at.kind === 'mafia') mafiaFailMsg = fail === 'heal' ? '🩺 마피아의 습격이 있었지만 누군가가 살려냈습니다!' : '🛡 마피아의 습격이 있었지만 아무도 죽지 않았습니다.';
       continue;
     }
-    const g = guard[t.id] || guard[at.t.id];
     kill(t, HOW[at.kind], at.by, at.kind);
-    if (g && at.by) guardNotes.push({ g, victim: t, by: at.by });
   }
 
   for (const t of poisoned) if (t.alive) priv(t, '💊 치료를 받아 독이 사라졌습니다. 살아났어요!');
@@ -425,8 +425,8 @@ function resolveNight(room) {
   if (mafiaFailMsg) U.sys(room, mafiaFailMsg);
   for (const d of deaths) U.io.kill(room, d.p, d.how);
   for (const gn of guardNotes) {
-    U.sys(room, `🛡 경호원이 지키던 ${gn.victim.name}님이 공격으로 사망했습니다! 공격한 사람은 ${gn.by.name}님입니다.`);
-    priv(gn.g, `🛡 지키던 ${gn.victim.name}님이 사망했습니다. (공격한 ${gn.by.name}님이 모두에게 공개되었습니다)`);
+    U.sys(room, `🛡 경호원 ${gn.g.name}님이 ${gn.victim.name}님 대신 공격을 받았습니다! 공격한 사람은 ${gn.by.name}님입니다.`);
+    priv(gn.g, `🛡 지키던 ${gn.victim.name}님 대신 공격을 받았습니다. (공격한 ${gn.by.name}님이 모두에게 공개되었습니다)`);
   }
   for (const t of revived) U.sys(room, `✨ ${t.name}님이 부활했습니다!`);
   if (!deaths.length && !mafiaFailMsg && !revived.length) U.sys(room, '고요한 밤이었습니다. 아무 일도 일어나지 않았습니다.');

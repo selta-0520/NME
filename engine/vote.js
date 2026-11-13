@@ -40,6 +40,7 @@ function confirmTally(room) {
   return { yes, no, ok: yes > no };
 }
 const confirmVoters = (room) => {
+  if (room.judgeOnly) return []; // 최후의 반론이 꺼진 판: 판사의 판결만 기다리는 짧은 시간
   const T = room.defense && U.byId(room, room.defense.id);
   return U.alive(room).filter((x) => x !== T && AB.canVote(room, x));
 };

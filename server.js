@@ -259,6 +259,7 @@ function viewFor(room, p) {
     if ((room.phase === 'defense' || room.phase === 'speak' || room.phase === 'confirm') && room.defense) {
       const T = byId(room, room.defense.id);
       v.defense = { id: room.defense.id, name: T ? T.name : '' };
+      v.judgeOnly = !!room.judgeOnly;
       if (room.phase === 'confirm') {
         const c = Object.entries(room.confirm || {}).filter(([pid]) => { const x = byId(room, pid); return x && x.alive; });
         const voters = E.confirmVoters(room);
@@ -399,7 +400,7 @@ function setPhase(room, phase) {
   if (phase === 'night') E.startNight(room);
   if (phase === 'day') room.dayAdj = {};
   if (phase === 'night') room.cycleAlive = alivePlayers(room).length;
-  if (phase === 'vote') { room.votes = {}; room.voteActs = {}; room.defense = null; room.confirm = {}; room.judgeVerdict = null; }
+  if (phase === 'vote') { room.votes = {}; room.voteActs = {}; room.defense = null; room.confirm = {}; room.judgeVerdict = null; room.judgeOnly = false; }
   if (phase === 'confirm') { room.confirm = {}; room.judgeVerdict = null; }
   broadcastState(room);
   if (phase === 'day' || phase === 'vote' || phase === 'defense' || phase === 'speak' || phase === 'confirm') scheduleBeg(room); else clearBeg(room);
@@ -410,7 +411,7 @@ function startGame(room) {
   Bots.reset(room);
   clearBeg(room); room.lastBoom = null; room.lastPick = null;
   room.jokerBefore = null; room.reports = {}; room.replay = []; room.titles = []; room.eventToday = null; room.anonDay = 0;
-  room.wills = []; room.willChats = []; room.rps = null; room.judgeVerdict = null; room.speaker = null; room.speakQueue = [];
+  room.wills = []; room.willChats = []; room.rps = null; room.judgeVerdict = null; room.judgeOnly = false; room.speaker = null; room.speakQueue = [];
   for (const x of room.players) x.chats = 0;
   const skipped = E.assignRoles(room);
   room.quiet = 0;
@@ -515,6 +516,14 @@ function advance(room) {
       setPhase(room, 'defense');
       return;
     }
+    if (!room.settings.finalDefense && t.leader && t.leader.alive && alivePlayers(room).some((x) => x.role === 'judge' && x !== t.leader && !x.s.judgeUsed)) {
+      // 최후의 반론이 꺼져 있어도 판사는 판결할 수 있다: 처형 직전에 짧은 시간을 준다 (판결이 없으면 그대로 처형)
+      E.announceTally(room, t);
+      room.defense = { id: t.leader.id }; room.judgeOnly = true;
+      addChat(room, 'sys', `⚖️ ${t.leader.name}님이 처형 후보입니다. 판사에게 판결할 기회가 주어집니다. (판결이 없으면 그대로 처형)`);
+      setPhase(room, 'confirm');
+      return;
+    }
     finishVote(room, null);
   } else if (room.phase === 'defense') {
     if (!E.confirmVoters(room).length) { finishVote(room, { ok: true }); return; } // 투표할 사람이 없으면 그대로 진행
@@ -526,6 +535,14 @@ function advance(room) {
     nextSpeakOrConfirm(room);
   } else if (room.phase === 'confirm') {
     const c = E.confirmTally(room);
+    if (room.judgeOnly) { // 판사만 판결할 수 있었던 경우: 판결이 없으면 처형
+      room.judgeOnly = false;
+      const ok = c.judged ? c.ok : true;
+      const j = c.judged && byId(room, c.judge);
+      addChat(room, 'sys', c.judged ? `⚖️ 판사 ${j ? j.name : ''}님의 판결로 처형이 ${ok ? '확정' : '무효'}되었습니다.` : '⚖️ 판사의 판결이 없어 투표 결과대로 처형합니다.');
+      finishVote(room, { ok });
+      return;
+    }
     if (c.judged) { const j = byId(room, c.judge); addChat(room, 'sys', `⚖️ 판사 ${j ? j.name : ''}님의 판결로 처형이 ${c.ok ? '확정' : '무효'}되었습니다. (표 계산: 찬성 ${c.yes} · 반대 ${c.no})`); }
     else addChat(room, 'sys', `⚖️ 찬반투표 결과: 찬성 ${c.yes} · 반대 ${c.no}`);
     finishVote(room, { ok: c.ok });
@@ -543,7 +560,7 @@ function finishVote(room, defense) {
   const mark = room.replayMark || 0;
   E.resolveVote(room, defense ? { defense } : null);
   logStep(room, { kind: 'vote', votes: Object.entries(snap), died: before.filter((id) => { const x = byId(room, id); return x && !x.alive; }) }, mark);
-  room.defense = null;
+  room.defense = null; room.judgeOnly = false;
   Bots.afterResolve(room, before, snap);
   if (room.lastBoom && alivePlayers(room).length) { // 처형된 테러리스트가 함께 죽을 사람을 고르는 시간
     addChat(room, 'sys', '💣 처형된 테러리스트가 함께 죽을 사람을 고르고 있습니다…');
@@ -574,7 +591,7 @@ function resetToLobby(room) {
   clearTimeout(room.timer); clearBeg(room); room.lastBoom = null; room.lastPick = null;
   Bots.reset(room);
   room.phase = 'lobby'; room.day = 0; room.winner = null; room.night = null; room.votes = {}; room.voteActs = {};
-  room.touches = []; room.pendingWin = null; room.endsAt = 0; room.chat = []; room.seq++; room.jokerBefore = null; room.defense = null; room.confirm = {}; room.wills = []; room.willChats = []; room.rps = null; room.judgeVerdict = null; room.speaker = null; room.speakQueue = [];
+  room.touches = []; room.pendingWin = null; room.endsAt = 0; room.chat = []; room.seq++; room.jokerBefore = null; room.defense = null; room.confirm = {}; room.wills = []; room.willChats = []; room.rps = null; room.judgeVerdict = null; room.judgeOnly = false; room.speaker = null; room.speakQueue = [];
   for (const p of room.players) {
     p.role = null; p.alive = true; p.s = {}; p.team = null; p.contacted = false; p.destroyed = false; p.exorcised = false; p.blessed = false; p.blessedBy = null; p.loaning = false; p.origRole = null; p.guess = null;
   }
