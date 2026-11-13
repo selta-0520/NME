@@ -909,10 +909,10 @@ function renderMain() {
         h('div', { class: 'hint' }, isT ? '지금은 나만 말할 수 있어요. 아래 채팅으로 억울함을 호소하세요!' : '처형 후보가 말하는 중이에요. 잘 듣고 이어지는 찬반투표에서 결정하세요.'));
       if (me.extra) { // 검사·변호사: 능력을 쓸지 고른다
         const pro = me.role === 'prosecutor';
-        box.append(h('div', { class: 'hint', style: 'margin-top:8px' }, pro ? '⚔️ 검사 능력: 쓰면 반론 뒤 추가 발언을 하고 찬반투표에서 찬성이 2표예요. 안 쓰면 바로 찬반투표예요. (안 고르면 쓰지 않아요)' : '⚖ 변호사 능력: 쓰면 반론 뒤 추가 발언을 하고 찬반투표에서 반대가 2표예요. 안 쓰면 바로 찬반투표예요. (안 고르면 쓰지 않아요)'),
+        box.append(h('div', { class: 'hint', style: 'margin-top:8px' }, pro ? '⚔️ 추가 발언: 쓰면 반론 뒤 추가 발언을 해요. 안 쓰면 바로 찬반투표예요. (찬성 2표는 항상 적용돼요. 안 고르면 쓰지 않아요)' : '⚖ 추가 발언: 쓰면 반론 뒤 추가 발언을 해요. 안 쓰면 바로 찬반투표예요. (반대 2표는 항상 적용돼요. 안 고르면 쓰지 않아요)'),
           h('div', { class: 'actions' },
-            h('button', { class: me.extra.use ? '' : 'ghost', onclick: () => act('extra', { use: true }) }, me.extra.use ? '✔ 능력 사용함' : '능력 사용'),
-            h('button', { class: me.extra.use ? 'ghost' : '', onclick: () => act('extra', { use: false }) }, !me.extra.use ? '✔ 사용 안 함' : '사용 안 함')));
+            h('button', { class: me.extra.use ? '' : 'ghost', onclick: () => act('extra', { use: true }) }, me.extra.use ? '✔ 추가 발언 함' : '추가 발언 하기'),
+            h('button', { class: me.extra.use ? 'ghost' : '', onclick: () => act('extra', { use: false }) }, !me.extra.use ? '✔ 추가 발언 안 함' : '추가 발언 안 함')));
       }
     } else if (st.phase === 'speak') {
       const sp = st.speaker || {}; const isMe = sp.id === st.meId;

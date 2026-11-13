@@ -233,8 +233,8 @@ function infoLines(room, p) {
     case 'rich': L.push(p.s.meetDay != null ? '🎉 거지를 만났어요! 둘 다 살아있으면 곧 우승해요.' : '💰 거지를 찾아 보세요.'); break;
     case 'revolutionary': L.push(p.s.joined ? `✊ ${p.team === 'mafia' ? '마피아' : '시민'} 팀이 되었어요.` : '✊ 4일차 낮까지 아무도 나에게 능력을 쓰지 않으면 우승해요.'); break;
     case 'judge': L.push(U.usesLeft(room, p, 'judge') <= 0 ? '⚖️ 판결을 모두 내렸어요.' : `⚖️ 찬반투표 시간에 처형의 찬성/반대를 직접 결정할 수 있어요. (${U.usesTag(room, p, 'judge')})`); break;
-    case 'prosecutor': { const m = other('lawyer'); L.push(`⚔️ 처형 후보의 최후의 반론 시간에 능력을 쓸지 고를 수 있어요. 쓰면 반론 뒤 추가 발언을 먼저 하고, 찬반투표에서 찬성이 2표예요. (안 쓰면 바로 찬반투표)${m ? ` 변호사: ${m.name}${m.alive ? '' : ' (사망)'}` : ''}`); break; }
-    case 'lawyer': { const m = other('prosecutor'); L.push(`⚖ 처형 후보의 최후의 반론 시간에 능력을 쓸지 고를 수 있어요. 쓰면 반론 뒤 (검사 다음으로) 추가 발언을 하고, 찬반투표에서 반대가 2표예요. (안 쓰면 바로 찬반투표)${m ? ` 검사: ${m.name}${m.alive ? '' : ' (사망)'}` : ''}`); break; }
+    case 'prosecutor': { const m = other('lawyer'); L.push(`⚔️ 처형 후보의 최후의 반론 시간에 추가 발언을 할지 고를 수 있어요. 쓰면 반론 뒤 추가 발언을 먼저 해요. (안 써도 바로 찬반투표로 넘어갈 뿐) 찬반투표에서 찬성은 항상 2표예요.${m ? ` 변호사: ${m.name}${m.alive ? '' : ' (사망)'}` : ''}`); break; }
+    case 'lawyer': { const m = other('prosecutor'); L.push(`⚖ 처형 후보의 최후의 반론 시간에 능력을 쓸지 고를 수 있어요. 쓰면 반론 뒤 (검사 다음으로) 추가 발언을 해요. (안 써도 바로 찬반투표로 넘어갈 뿐) 찬반투표에서 반대는 항상 2표예요.${m ? ` 검사: ${m.name}${m.alive ? '' : ' (사망)'}` : ''}`); break; }
     case 'guardian': L.push(U.usesLeft(room, p, 'guardian') <= 0 ? '🛡 능력을 모두 사용했어요.' : `🛡 밤에 1명을 지목하면 그날 그 사람은 투표 후보에서 제외돼요. (${U.usesTag(room, p, 'guardian')}, 그 사람도 투표는 할 수 있어요)`); break;
     case 'evil': L.push(p.contacted ? '😈 마피아와 접선했어요. 특별한 능력은 없지만 마피아 팀과 밤에 대화할 수 있어요.' : '🤝 밤마다 1명을 골라 마피아인지 확인하세요. 마피아면 접선해서 마피아 팀과 대화할 수 있어요. (특별한 능력은 없어요)'); break;
     case 'attention': L.push('📣 투표로 처형되면 혼자 우승해요!'); break;

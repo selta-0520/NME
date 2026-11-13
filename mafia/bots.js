@@ -682,9 +682,8 @@ function botConfirm(room, p) {
   sync(room, p);
   const L = lv(room, p);
   let yes;
-  const usedExtra = !!(room.extra && room.extra[p.id]);
-  if (p.role === 'prosecutor' && usedExtra) yes = chance(0.85); // 능력을 쓴 검사는 찬성, 변호사는 반대 쪽
-  else if (p.role === 'lawyer' && usedExtra) yes = chance(0.15);
+  if (p.role === 'prosecutor') yes = chance(0.85); // 검사는 찬성, 변호사는 반대 쪽
+  else if (p.role === 'lawyer') yes = chance(0.15);
   else if (mafiaSide(p) && knownMate(p, T)) yes = chance(L.mistake);
   else if (room.votes[p.id] === T.id) yes = chance(0.92);
   else { const W = L.wise || 0; const sc = W >= 0.7 ? 0.6 * sus(room, p, T, { noSocial: true }) + 0.4 * sus(room, p, T) : sus(room, p, T); yes = chance(Math.max(0.12, Math.min(0.93, 0.58 + sc / 120))); }
