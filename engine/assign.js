@@ -15,6 +15,7 @@ function assignRoles(room) {
   const forcedSet = new Set(s.forcedRoles || []); // ⭐ 필수 = 최소 1명
   if (!enabled.has('beggar') || !enabled.has('rich')) { enabled.delete('beggar'); enabled.delete('rich'); }
   const skipped = [], notes = [];
+  if (enabled.has('pharmacist') && !enabled.has('doctor')) { enabled.delete('pharmacist'); notes.push('ℹ️ 의사가 나오지 않게 설정되어 있어 약사는 나오지 않아요.'); }
   if (!s.finalDefense && (enabled.has('prosecutor') || enabled.has('lawyer'))) { enabled.delete('prosecutor'); enabled.delete('lawyer'); notes.push('ℹ️ 최후의 반론이 꺼져 있어 검사·변호사는 나오지 않아요.'); }
 
   // 직업별 [최소, 최대] (묶음 개수 기준)

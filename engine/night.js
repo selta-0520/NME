@@ -6,6 +6,7 @@ const AB = require('./abilities');
 
 function startNight(room) {
   room.night = { acts: {} };
+  room.nightFromMsg = room.msgId || 0; // 도청꾼: 이 밤에 오간 대화만 도청한다
   room.touches = [];
   for (const p of U.alive(room)) {
     // 암살자: 2일차 밤부터 매일 밤 랜덤 타겟 (접선 전)
@@ -116,13 +117,13 @@ function resolveNight(room) {
   const guard = {};          // 보호받는 사람 id -> 경호원
   const nightDeadIds = new Set();
   const guardNotes = [];     // 경호원이 지키던 사람이 공격받아 죽은 기록
-  const witnesses = [], executors = [], attacked = {}; // 목격자·유언집행자의 대상, 공격받은 사람 id -> 공격자
+  const pharmas = [], selfSnipes = [], witnesses = [], executors = [], attacked = {}; // 목격자·유언집행자의 대상, 공격받은 사람 id -> 공격자
   room.wills = [];
 
   // ---- 0. 훔친 능력을 쓰는 도둑은 이번 밤 동안 그 직업으로 처리한다 (끝나면 되돌림)
   const swapped = [];
   for (const p of U.alive(room)) {
-    if (p.role !== 'thief' || !p.s.loan || p.loaning) continue;
+    if ((p.role !== 'thief' && p.role !== 'magician') || !p.s.loan || p.loaning) continue;
     const a = acts[p.id];
     if (!a || (!a.target && a.mode !== 'on')) continue;
     if (!AB.nightOptions(room, p, a.mode)) continue; // 유혹당함 등
@@ -267,7 +268,20 @@ function resolveNight(room) {
         break;
       case 'destroyer': p.s.destroyUsed = (p.s.destroyUsed || 0) + 1; attacks.push({ kind: 'destroy', by: p, t }); U.touch(room, p, t); break;
       case 'gambler': p.s.gamble = t.id; break;
-      case 'evil': { // 능력은 없고 접선만 한다
+      case 'vigilante': { // 자경단: 마피아 팀이면 그 사람이 죽고, 아니면 자신이 죽는다
+        U.touch(room, p, t);
+        if (U.teamOf(t) === 'mafia') attacks.push({ kind: 'snipe', by: p, t }); else selfSnipes.push(p);
+        break;
+      }
+      case 'eavesdropper': p.s.tapT = t.id; U.touch(room, p, t); break;
+      case 'pharmacist': {
+        U.touch(room, p, t);
+        if (U.pharmaArmed(room, p)) { pharmas.push({ p, t }); break; }
+        if (t.role === 'doctor') { p.s.doc = t.id; priv(p, `💉 ${t.name}님은 의사였습니다! 접선했어요. 의사가 죽으면 약을 줄 수 있습니다.`); }
+        else priv(p, `💉 ${t.name}님은 의사가 아니었습니다.`);
+        break;
+      }
+      case 'evil': case 'sniper': { // 능력은 없고(또는 낮 능력) 접선만 한다
         U.touch(room, p, t);
         if (U.isMafiaKnown(t)) U.contact(room, p, t); else priv(p, `🤝 ${t.name}님은 마피아가 아니었습니다.`);
         break;
@@ -306,6 +320,18 @@ function resolveNight(room) {
     U.touch(room, p, t);
   }
 
+  // 약사: 이미 중독된 사람에게 주면 약이 독을 없애는 데 쓰이고, 아니면 다음 날 밤 공격을 한 번 치료한다
+  for (const { p, t } of pharmas) {
+    if (t.s.poison && t.s.poison.day < day) {
+      t.s.poison = null;
+      priv(t, '💊 누군가가 약을 줘서 독이 사라졌습니다!');
+      priv(p, `💊 ${t.name}님은 중독된 상태였습니다. 약이 해독에 쓰였어요.`);
+    } else {
+      t.s.med = day + 1;
+      priv(p, `💊 ${t.name}님에게 약을 줬습니다. 다음 날 밤 공격을 한 번 치료받습니다.`);
+    }
+  }
+  for (const t of U.alive(room)) if (t.s.med === day) { addHeal(t, {}); t.s.med = null; } // 어제 받은 약의 효과
   // 독: 지난 밤에 중독된 사람은 이번 밤에 죽는다 (치료받으면 살아남는다)
   const poisoned = [];
   for (const t of U.alive(room)) {
@@ -316,7 +342,7 @@ function resolveNight(room) {
   }
 
   // ---- 6. 공격 처리 (파괴 → 물약 → 미치광이 → 마피아 순서)
-  const order = { destroy: 0, potion: 1, madman: 2, poison: 2.5, mafia: 3, assassin: 4 };
+  const order = { destroy: 0, potion: 1, madman: 2, poison: 2.5, mafia: 3, snipe: 3.5, assassin: 4 };
   attacks.sort((a, b) => order[a.kind] - order[b.kind]);
   const kill = (victim, how, by, kind) => {
     victim.alive = false; nightDeadIds.add(victim.id);
@@ -328,7 +354,7 @@ function resolveNight(room) {
       deaths.push({ p: by, how: '테러리스트의 자폭에 휘말려 사망했습니다.' });
     }
   };
-  const HOW = { mafia: '마피아에게 살해당했습니다.', potion: '정체불명의 공격으로 사망했습니다.', madman: '정체불명의 공격으로 사망했습니다.', destroy: '파괴당했습니다. (마피아의 공격이 아닙니다)', assassin: '정체불명의 공격으로 사망했습니다.', poison: '독에 중독되어 사망했습니다.' };
+  const HOW = { mafia: '마피아에게 살해당했습니다.', potion: '정체불명의 공격으로 사망했습니다.', madman: '정체불명의 공격으로 사망했습니다.', destroy: '파괴당했습니다. (마피아의 공격이 아닙니다)', assassin: '정체불명의 공격으로 사망했습니다.', poison: '독에 중독되어 사망했습니다.', snipe: '저격으로 인해 사망했습니다.' };
   let mafiaFailMsg = null;
   for (const at of attacks) {
     let t = at.t;
@@ -359,7 +385,21 @@ function resolveNight(room) {
     kill(t, HOW[at.kind], at.by, at.kind);
   }
 
+  for (const p of selfSnipes) if (p.alive) kill(p, HOW.snipe, null, 'snipe'); // 자경단: 마피아 팀이 아니어서 자신이 죽는다
   for (const t of poisoned) if (t.alive) priv(t, '💊 치료를 받아 독이 사라졌습니다. 살아났어요!');
+  // 약사: 접선한 의사가 죽었다면 이제 약을 줄 수 있다
+  for (const p of room.players) if (p.role === 'pharmacist' && p.s.doc && !p.s.armed) { const d = U.byId(room, p.s.doc); if (d && !d.alive) { p.s.armed = true; if (p.alive) priv(p, '💉 접선한 의사가 죽었습니다. 이제 밤마다 약을 줄 수 있어요!'); } }
+  // 도청꾼: 지목한 사람이 속한 비밀 채팅(밤)을 알려준다 — 어느 팀의 채팅인지는 알려주지 않는다
+  for (const p of U.alive(room)) {
+    if (p.role !== 'eavesdropper' || !p.s.tapT) continue;
+    const t = U.byId(room, p.s.tapT); p.s.tapT = null;
+    if (!t) continue;
+    const from = room.nightFromMsg || 0;
+    const msgs = room.chat.filter((m) => m.id > from && m.night && (m.ch === 'mafia' || m.ch === 'couple') && AB.canSeeMsg(room, t, m));
+    if (!msgs.length) { priv(p, `🎧 ${t.name}님을 도청했지만, 이번 밤에는 들린 비밀 대화가 없었습니다.`); continue; }
+    priv(p, `🎧 ${t.name}님이 속한 비밀 채팅을 도청했습니다! (어느 팀의 대화인지는 알 수 없어요)`);
+    for (const m of msgs.slice(-12)) priv(p, `🎧 ${m.name}: ${m.text}`);
+  }
   // 목격자: 지목한 사람이 공격받았는지, 공격자 후보 3명
   for (const { p, t } of witnesses) {
     const by = attacked[t.id];
@@ -433,8 +473,10 @@ function resolveNight(room) {
     if (ls && ls.known) p.s.known = Object.assign(p.s.known || {}, ls.known);
     if (ls && ls.report) p.s.report = ls.report;
     p.s.loan = null; p.s.lnS = null;
-    priv(p, '🧤 훔친 능력을 사용했습니다. 이제 다시 다른 사람의 능력을 훔칠 수 있어요.');
+    if (p.role === 'thief') priv(p, '🧤 훔친 능력을 사용했습니다. 이제 다시 다른 사람의 능력을 훔칠 수 있어요.');
+    else priv(p, `🎩 마술이 끝났습니다. ${day + 2}일차 밤에 다시 쓸 수 있어요.`);
   }
+  for (const p of room.players) if (p.role === 'magician' && p.s.loan) { p.s.loan = null; p.s.lnS = null; priv(p, `🎩 얻은 능력을 쓰지 않아 마술이 끝났습니다. ${day + 2}일차 밤에 다시 쓸 수 있어요.`); }
 
   // ---- 10. 아침 공지
   U.sys(room, `☀️ ${day}일차 아침이 밝았습니다.`);

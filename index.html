@@ -901,6 +901,20 @@ function renderMain() {
         h('button', { class: used === 'long' ? '' : 'ghost', disabled: !!used, onclick: () => act('timeadj', { dir: 'long' }) }, '⏪ 10초 늘리기')),
       h('div', { class: 'hint', style: 'margin-top:6px' }, used ? `오늘은 ${used === 'short' ? '줄이기' : '늘리기'}를 썼어요. (아침마다 한 번만 쓸 수 있어요)` : '둘 중 하나만, 아침마다 한 번 쓸 수 있어요. 쓰면 모두에게 알려져요.')));
   }
+  if (st.phase === 'day' && me.alive && me.snipe && me.snipe.open) { // 저격수: 낮에 직업을 맞혀 저격
+    const sel = (opts, cur, cb, ph) => { const e = h('select', { onchange: (ev) => cb(ev.target.value), style: 'width:100%;margin:4px 0' }, h('option', { value: '' }, ph), ...opts.map(([v, t]) => h('option', { value: v }, t))); e.value = cur; return e; };
+    const tn = (id) => { const q = st.players.find((x) => x.id === id); return q ? q.name : ''; };
+    main.append(h('div', { class: 'card' },
+      h('div', { class: 'albl', style: 'font-weight:700;margin-bottom:6px' }, '🔫 저격 (하루 한 번)'),
+      h('div', { class: 'hint' }, '한 사람의 직업을 맞히면 그 사람이 죽고, 틀리면 내가 죽어요. 신중하게 고르세요!'),
+      sel(me.snipe.targets.map((id) => [id, tn(id)]), snipeT, (v) => { snipeT = v; }, '저격할 사람 선택'),
+      sel(me.snipe.roles.map((r) => [r.key, r.name]), snipeG, (v) => { snipeG = v; }, '맞힐 직업 선택'),
+      h('div', { class: 'actions' }, h('button', { onclick: () => {
+        if (!snipeT || !snipeG) return toast('사람과 직업을 모두 골라 주세요.');
+        if (!confirm(`${tn(snipeT)}님이 "${(ROLE[snipeG] || {}).name}"이(가) 맞나요? 틀리면 내가 죽어요.`)) return;
+        const t = snipeT, g = snipeG; snipeT = ''; snipeG = ''; act('snipe', { target: t, guess: g });
+      } }, '🔫 저격!'))));
+  }
   if ((st.phase === 'defense' || st.phase === 'speak' || st.phase === 'confirm') && st.defense) {
     const isT = st.defense.id === st.meId;
     const box = h('div', { class: 'card defbox' });
@@ -1067,6 +1081,7 @@ function numField(key, label, unit) {
     h('div', null, label, h('div', { class: 'note' }, `${lo}~${hi}${unit}`)),
     h('input', { type: 'number', 'data-key': key, min: lo, max: hi, onchange: (e) => sendPatch({ [key]: Number(e.target.value) }) }));
 }
+let snipeT = '', snipeG = '';
 const USE_FIELDS = [['reporter', '📰 기자 속보'], ['agitator', '📰 선동가 속보'], ['priest', '⛪ 성직자 부활'], ['angel', '✨ 사제 가호'], ['scientist', '⚗ 과학자 물약'], ['judge', '⚖️ 판사 판결'], ['soldier', '🛡 군인 방어 (공격 버티기)'], ['madman', '🌀 광인 처형 방어'], ['guardian', '🛡 수호자 지목']];
 function useField(key, label) {
   return h('div', { class: 'field' }, h('div', null, label, h('div', { class: 'note' }, '1~5번')),

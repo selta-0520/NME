@@ -100,6 +100,10 @@ U.usesTag = (room, p, key) => { const m = U.maxUses(room, p, key); return m <= 1
 
 // 내기꾼이 우승하려면 가위바위보로 이겨야 하는 사람 수: 게임 시작 인원의 5분의 1 (올림, 최소 1명)
 U.bettorNeed = (room) => Math.max(1, Math.ceil((room.startN || room.players.length) / 5));
+// 약사: 접선한 의사가 죽었는지(= 약을 줄 수 있는 상태인지)
+U.pharmaArmed = (room, p) => { if (p.s.armed) return true; const d = p.s.doc && U.byId(room, p.s.doc); if (d && !d.alive) { p.s.armed = true; return true; } return false; };
+// 마술사: 능력을 쓸 수 있는 밤인가 (쓰고 나면 하루 쉰다)
+U.magicReady = (room, p) => !p.s.magicUsed || room.day >= p.s.magicUsed + 2;
 // 수호자: 그날 투표 후보에서 제외된 사람
 U.voteImmune = (room, p) => !!p && p.alive && p.s && p.s.voteImmune === room.day;
 

@@ -916,6 +916,27 @@ function handleAction(room, p, b) {
       broadcastState(room);
       return;
     }
+    case 'snipe': { // 🔫 저격수: 낮에 한 명의 직업을 맞히면 그 사람이 죽고, 틀리면 자신이 죽는다
+      if (room.phase !== 'day') fail('낮(아침 토론) 시간에만 저격할 수 있어요.');
+      if (p.role !== 'sniper' || !p.alive) fail('저격수만 쓸 수 있어요.');
+      if (p.s.sniped === room.day) fail('오늘은 이미 저격했어요.');
+      const t = byId(room, b.target);
+      if (!t || !t.alive || t === p) fail('저격할 수 없는 대상이에요.');
+      if (!ROLE[b.guess]) fail('맞힐 직업을 골라 주세요.');
+      p.s.sniped = room.day;
+      const hit = t.role === b.guess;
+      const how = '저격으로 인해 사망했습니다.';
+      let fizzle = false;
+      if (hit) {
+        if (t.blessed) { t.blessed = false; fizzle = true; const pr = t.blessedBy ? byId(room, t.blessedBy) : null; if (pr) U.priv(room, pr, `✨ 가호를 내린 ${t.name}님이 공격을 받았지만 가호가 막아 냈습니다! (가호는 사라졌어요)`); }
+        else if (U.survive(room, t)) fizzle = true;
+      }
+      if (fizzle) addChat(room, 'sys', '🔫 저격이 있었지만 아무도 죽지 않았습니다.');
+      else killPlayer(room, hit ? t : p, how);
+      const w = E.checkWin(room);
+      if (w) endGame(room, w); else broadcastState(room);
+      return;
+    }
     case 'judge': { // ⚖️ 판사: 찬반투표의 결과를 직접 결정 (1회)
       if (room.phase !== 'confirm' || !room.defense) fail('판결은 찬반투표 시간에만 내릴 수 있어요.');
       if (p.role !== 'judge' || !p.alive) fail('판사만 쓸 수 있어요.');

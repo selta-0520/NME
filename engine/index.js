@@ -1,4 +1,5 @@
 'use strict';
+const { ROLE: ROLE_, LOANABLE } = require('../roles');
 // 게임 엔진 묶음. server.js 는 이 파일만 불러 씁니다.
 const U = require('./util');
 const AB = require('./abilities');
@@ -21,6 +22,16 @@ function setNightAct(room, p, b) {
     act.target = b.target;
   } else if (b.keepTarget && old.target && opt.targets.includes(old.target)) act.target = old.target; // 모드만 바꿀 때
   if (act.target || act.text || act.mode) room.night.acts[p.id] = act; else delete room.night.acts[p.id];
+  // 마술사: 능력을 쓰기로 하면 바로 시민 팀 직업 하나를 랜덤으로 얻는다 (그날 밤 그 능력을 쓸 수 있다)
+  if (p.role === 'magician' && !p.s.loan && act.mode === 'on') {
+    const en = room.settings.enabledRoles;
+    const pool = LOANABLE.filter((k) => ROLE_[k] && ROLE_[k].team === 'citizen' && en.includes(k) && k !== 'magician');
+    if (!pool.length) { U.priv(room, p, '🎩 이번 판에는 얻을 수 있는 시민 팀 능력이 없어요.'); return; }
+    const k = U.pick(pool);
+    p.s.loan = k; p.s.lnS = {}; p.s.magicUsed = room.day;
+    delete room.night.acts[p.id];
+    U.priv(room, p, `🎩 마술 성공! 오늘 밤 "${ROLE_[k].name}"의 능력을 쓸 수 있어요. (${ROLE_[k].desc})`);
+  }
 }
 
 // 투표시간 능력 선택 저장
@@ -55,6 +66,11 @@ function meView(room, p) {
   }
   if (room.phase === 'confirm' && p.alive && p.role === 'judge' && U.usesLeft(room, p, 'judge') > 0 && !room.judgeVerdict && room.defense && room.defense.id !== p.id) me.judge = { open: true };
   if ((p.role === 'prosecutor' || p.role === 'lawyer') && p.alive && room.defense && ['defense', 'speak', 'confirm'].includes(room.phase) && room.defense.id !== p.id) me.extra = { open: room.phase === 'defense', use: !!(room.extra && room.extra[p.id]) };
+  if (room.phase === 'day' && p.alive && p.role === 'sniper' && p.s.sniped !== room.day) { // 저격수: 낮에 직업을 맞혀 저격
+    const en = room.settings.enabledRoles.filter((k) => ROLE_[k]);
+    for (const k of ['citizen', 'mafia', 'evil']) if (!en.includes(k)) en.push(k);
+    me.snipe = { open: true, targets: U.alive(room).filter((x) => x.id !== p.id).map((x) => x.id), roles: en.map((k) => ({ key: k, name: ROLE_[k].name })) };
+  }
   if (room.phase === 'rps') {
     const m = RPS.matchOf(room, p);
     if (m) { const mine = m.b === p.id; const opp = U.byId(room, mine ? m.t : m.b); me.rps = { side: mine ? 'bettor' : 'target', opp: opp ? opp.name : '', pick: (mine ? m.bm : m.tm) || null }; }

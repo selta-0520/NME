@@ -26,7 +26,7 @@ const PERSONAS = [{ talk: 1.5, sus: 0 }, { talk: 0.55, sus: 0 }, { talk: 1, sus:
 const persona = (p) => { const b = pm(p); if (!b.persona) b.persona = PERSONAS[crypto.randomInt(PERSONAS.length)]; return b.persona; };
 const FILLERS = ['안녕하세요! 다들 잘 부탁해요.', '아직은 단서가 없네요. 의견 좀 들어봐요.', '어제 밤에 무슨 일이 있었죠?', '조용한 사람이 신경 쓰이네요.', '투표는 신중하게 해요.', '일단 지켜볼게요.', '의심 가는 사람 있어요?'];
 const ONCE = new Set(['reporter', 'priest', 'angel', 'scientist']);
-const effRole = (p) => (p.role === 'thief' && p.s.loan ? p.s.loan : p.role); // 도둑은 훔친 능력의 직업처럼 행동
+const effRole = (p) => ((p.role === 'thief' || p.role === 'magician') && p.s.loan ? p.s.loan : p.role); // 도둑은 훔친 능력의 직업처럼 행동
 const ROLE_BY_NAME = {}; for (const r of ROLES) ROLE_BY_NAME[r.name] = r.key;
 const CLAIMABLE = ['police', 'doctor', 'soldier', 'politician', 'bodyguard', 'detective', 'reporter', 'medium'];
 
@@ -304,7 +304,12 @@ function pickNight(room, p, opt, mode) {
     }
     case 'angel': // 사제: 위협적인 진짜(처럼 보이는) 경찰·의사, 아니면 자신
       return (best(cands, (c) => (claimedRole(room, c.id, 'police') ? cred(room, p, c.id, 'police') * 160 : 0) + (claimedRole(room, c.id, 'doctor') ? 60 : 0) + (c.id === p.id ? 30 : 0) + trust(c) * 0.12, N) || {}).id;
-    case 'forger': case 'agitator': case 'poisoner': case 'evil': { // 접선 전: 마피아를 찾는 탐색 (이미 확인한 사람은 제외)
+    case 'eavesdropper': return (best(cands, (c) => S(c), N) || {}).id; // 수상한 사람이 마피아 대화에 있을 가능성
+    case 'pharmacist': { // 약사: 의사 찾기 → (의사 사망 후) 믿을 만한 사람에게 약
+      if (!U.pharmaArmed(room, p) && !p.s.doc) return (best(cands, (c) => (claimedRole(room, c.id, 'doctor') ? 120 : 0) - (b.checks[c.id] ? 200 : 0) + trust(c) * 0.1, N * 2) || {}).id;
+      return (best(cands, (c) => (claimedRole(room, c.id, 'police') ? cred(room, p, c.id, 'police') * 140 : 0) + (claimedRole(room, c.id, 'doctor') ? 40 : 0) + trust(c) * 0.3, N) || {}).id;
+    }
+    case 'forger': case 'agitator': case 'poisoner': case 'evil': case 'sniper': { // 접선 전: 마피아를 찾는 탐색 (이미 확인한 사람은 제외)
       const pool = cands.filter((c) => !b.checks[c.id] && !knownMate(p, c));
       const pick = rnd(pool.length ? pool : cands);
       if (pick && !b.checks[pick.id]) b.checks[pick.id] = 'tried';
@@ -314,6 +319,7 @@ function pickNight(room, p, opt, mode) {
       return (best(cands, (c) => (claimedRole(room, c.id, 'police') ? 120 : 0) + (claimedRole(room, c.id, 'doctor') ? 80 : 0) + (claimedRole(room, c.id, 'bodyguard') ? 40 : 0) + trust(c) * 0.15, N * 2) || {}).id;
     case 'thief': // 훔칠 사람: 능력이 있을 것 같은(경찰·의사로 주장한) 사람, 한 번 고른 사람은 제외됨
       return (best(cands, (c) => (claimedRole(room, c.id, 'police') ? 120 : 0) + (claimedRole(room, c.id, 'doctor') ? 90 : 0) + (claimedRole(room, c.id, 'bodyguard') ? 40 : 0) + (A.talk[c.id] > 0 ? 10 : 0), N * 2) || {}).id;
+    case 'vigilante': { const c = best(cands, (x) => S(x), 0); return c && S(c) > 70 ? c.id : null; } // 훔치거나 빌린 저격: 확실할 때만
     default: return rnd(cands).id;
   }
 }
@@ -361,9 +367,22 @@ function botNight(room, p) {
     }
     return;
   }
+  if (p.role === 'vigilante') { // 자경단: 확실히 수상할 때만 저격 (틀리면 자신이 죽는다)
+    const o3 = E.AB.nightOptions(room, p);
+    if (o3 && o3.targets.length && room.day >= 2) {
+      const cs = o3.targets.map((id) => U.byId(room, id)).filter(Boolean);
+      const c = best(cs, (x) => sus(room, p, x), 0);
+      if (c && sus(room, p, c) > 70 && chance(0.6)) act(room, p, { type: 'night', target: c.id });
+    }
+    return;
+  }
   let opt = E.AB.nightOptions(room, p);
   if (!opt) return;
   if (chance(L.skip)) return;
+  if (p.role === 'magician' && opt.noTarget) { // 마술사: 능력을 쓰기로 하면 바로 얻은 직업의 능력을 쓴다
+    if (chance(0.7)) { act(room, p, { type: 'night', target: null, mode: 'on' }); if (p.s.loan) botNight(room, p); }
+    return;
+  }
   if (ONCE.has(effRole(p)) && !worthUsing(room, p, opt)) return;
   if (opt.noTarget) { // 미치광이: 능력을 쓸지 말지
     const n = U.alive(room).length;
@@ -384,6 +403,16 @@ function botNight(room, p) {
   const A = ai(room);
   if (ok && U.canAttackAsMafia(room, p)) { A.tried[room.day] = id; A.lastKill = id; }
   if (ok && p.role === 'detective') pm(p).detA = id;
+}
+
+// 저격수(마피아): 낮에, 공개적으로 직업을 주장하고 믿을 만한 사람을 그 직업으로 지목 (틀리면 자신이 죽는다)
+function botSnipe(room, p) {
+  const A = ai(room);
+  if (!p.alive || room.phase !== 'day' || p.s.sniped === room.day || chance(0.5)) return;
+  const cs = A.claims.filter((c) => { const q = U.byId(room, c.by); return q && q.alive && q !== p && !knownMate(p, q) && ROLE[c.role] && cred(room, p, c.by, c.role) >= 0.6; });
+  if (!cs.length) return;
+  const c = rnd(cs);
+  act(room, p, { type: 'snipe', target: c.by, guess: c.role });
 }
 
 // ------------------------------------------------------------ 말하기
@@ -775,6 +804,7 @@ function schedule(room) {
         const t = topSuspect(room, p);
         if (t && sus(room, p, t) > 15 && pm(p).intentSaid !== room.day) { pm(p).intentSaid = room.day; say(room, p, `오늘은 ${t.name}님에게 투표할게요.`, { intent: t.id }); }
       });
+      if (p.role === 'sniper') at(0.35, 0.8, () => botSnipe(room, p));
     } else if (phase === 'vote') at(0.2, 0.85, () => botVote(room, p));
     else if (phase === 'defense') {
       if (room.defense && room.defense.id === p.id) at(0.1, 0.4, () => botDefense(room, p));

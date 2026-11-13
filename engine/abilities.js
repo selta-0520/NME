@@ -45,7 +45,25 @@ function nightOptions(room, p, modeOverride) {
       const left = U.destroyLimit(room) - (p.s.destroyUsed || 0);
       return left > 0 ? o(`💥 파괴할 사람 (남은 횟수 ${left}번)`, others) : null;
     }
-    case 'evil': return p.contacted ? null : o('🤝 마피아인지 확인할 사람 (마피아면 접선)', others);
+    case 'evil': case 'sniper': return p.contacted ? null : o('🤝 마피아인지 확인할 사람 (마피아면 접선)', others);
+    case 'vigilante': return o('🔫 저격할 사람 (마피아 팀이면 죽고, 아니면 내가 죽어요!)', others);
+    case 'eavesdropper': return o('🎧 도청할 사람 (그 사람의 비밀 채팅 내용을 아침에 알려줘요)', others);
+    case 'pharmacist': {
+      if (U.pharmaArmed(room, p)) return o('💊 약을 줄 사람 (자신 제외, 다음 날 밤 공격을 한 번 치료)', others);
+      if (!p.s.doc) return o('🔍 의사인지 확인할 사람 (의사면 접선)', others);
+      return null; // 접선한 의사가 아직 살아 있다
+    }
+    case 'magician': {
+      if (p.s.loan && !p.loaning) { // 이미 오늘 밤의 마술을 쓴 상태: 얻은 직업의 능력을 쓴다
+        const opt = U.withLoan(p, () => nightOptions(room, p, modeOverride));
+        if (opt) opt.label = `🎩 마술(${ROLE[p.s.loan].name}) — ${opt.label}`;
+        return opt;
+      }
+      if (!U.magicReady(room, p)) return null;
+      const modes = [{ key: 'on', label: '🎩 능력 사용 (시민 팀 직업 하나를 랜덤으로 얻어요)' }, { key: 'off', label: '사용 안 함' }];
+      const mode = (modeOverride || a.mode) === 'on' ? 'on' : 'off';
+      return o('🎩 오늘 밤 마술을 쓸까요?', [], { modes, mode, noTarget: true });
+    }
     case 'forger': return p.contacted ? null : o('🤝 마피아인지 확인할 사람 (마피아면 접선)', others);
     case 'agitator': {
       if (!p.contacted) return o('🤝 마피아인지 확인할 사람 (마피아면 접선)', others);
@@ -145,7 +163,7 @@ function chatInfo(room, p) {
   if (room.phase === 'rps') return { ch: null, label: '✊ 가위바위보 대결 중이에요' };
   if (p.s.silenceDay === room.day) return { ch: null, label: '😨 겁을 먹어 말할 수 없어요' };
   if (room.phase === 'speak') { // 검사·변호사의 추가 발언 시간
-    return room.speaker === p.id ? { ch: 'all', label: `⚔️ 지금은 ${U.roleName(p.role)}의 발언 시간이에요 — 하고 싶은 말을 하세요` } : { ch: null, label: '⚔️ 검사·변호사의 발언을 듣는 중이에요' };
+    return room.speaker === p.id ? { ch: 'all', label: '⚔️ 지금은 나의 추가 발언 시간이에요 — 하고 싶은 말을 하세요' } : { ch: null, label: '⚔️ 추가 발언을 듣는 중이에요' };
   }
   if (room.phase === 'defense' && room.defense) { // 최후의 반론: 처형 후보만 말할 수 있다
     return room.defense.id === p.id ? { ch: 'all', label: '🛡 최후의 반론 — 마지막으로 하고 싶은 말을 하세요' } : { ch: null, label: '🛡 최후의 반론을 듣는 중이에요' };
@@ -236,6 +254,17 @@ function infoLines(room, p) {
     case 'prosecutor': { const m = other('lawyer'); L.push(`⚔️ 처형 후보의 최후의 반론 시간에 추가 발언을 할지 고를 수 있어요. 쓰면 반론 뒤 추가 발언을 먼저 해요. (안 써도 바로 찬반투표로 넘어갈 뿐) 찬반투표에서 찬성은 항상 2표예요.${m ? ` 변호사: ${m.name}${m.alive ? '' : ' (사망)'}` : ''}`); break; }
     case 'lawyer': { const m = other('prosecutor'); L.push(`⚖ 처형 후보의 최후의 반론 시간에 능력을 쓸지 고를 수 있어요. 쓰면 반론 뒤 (검사 다음으로) 추가 발언을 해요. (안 써도 바로 찬반투표로 넘어갈 뿐) 찬반투표에서 반대는 항상 2표예요.${m ? ` 검사: ${m.name}${m.alive ? '' : ' (사망)'}` : ''}`); break; }
     case 'guardian': L.push(U.usesLeft(room, p, 'guardian') <= 0 ? '🛡 능력을 모두 사용했어요.' : `🛡 밤에 1명을 지목하면 그날 그 사람은 투표 후보에서 제외돼요. (${U.usesTag(room, p, 'guardian')}, 그 사람도 투표는 할 수 있어요)`); break;
+    case 'vigilante': L.push('🔫 밤마다 1명을 저격할 수 있어요. 마피아 팀이면 그 사람이 죽고, 아니면 내가 죽어요. (신중하게!)'); break;
+    case 'sniper': L.push(p.contacted ? '🤝 마피아와 접선했어요.' : '🤝 밤마다 1명을 골라 마피아인지 확인하세요. 마피아면 접선해요.', p.s.sniped === room.day ? '🔫 오늘은 이미 저격했어요.' : '🔫 낮에 한 명을 지정해 직업을 맞히면 그 사람이 죽고, 틀리면 내가 죽어요. (하루 한 번)'); break;
+    case 'eavesdropper': L.push('🎧 밤마다 1명을 도청해요. 그 사람이 속한 비밀 채팅 내용을 아침에 알려줘요. (어느 팀인지는 알 수 없어요)'); break;
+    case 'pharmacist': {
+      const d = p.s.doc && U.byId(room, p.s.doc);
+      if (U.pharmaArmed(room, p)) L.push('💊 의사가 죽어서 약을 줄 수 있어요. 밤마다 1명(자신 제외)에게 주면 다음 날 밤 공격을 한 번 치료받아요. 독에 걸린 사람에게 주면 독이 사라져요.');
+      else if (d) L.push(`💉 접선한 의사: ${d.name}님. 의사가 죽으면 약을 줄 수 있어요.`);
+      else L.push('🔍 밤마다 1명을 골라 의사인지 확인하세요. 의사면 접선해요.');
+      break;
+    }
+    case 'magician': L.push(p.s.loan ? `🎩 오늘 밤 쓸 수 있는 직업: ${ROLE[p.s.loan].name}` : U.magicReady(room, p) ? '🎩 밤마다 마술을 쓸지 골라요. 쓰면 시민 팀 직업 하나를 랜덤으로 얻어 그날 밤 써요. (쓰고 나면 하루 쉬어요)' : `🎩 쉬는 중이에요. ${p.s.magicUsed + 2}일차 밤에 다시 쓸 수 있어요.`); break;
     case 'evil': L.push(p.contacted ? '😈 마피아와 접선했어요. 특별한 능력은 없지만 마피아 팀과 밤에 대화할 수 있어요.' : '🤝 밤마다 1명을 골라 마피아인지 확인하세요. 마피아면 접선해서 마피아 팀과 대화할 수 있어요. (특별한 능력은 없어요)'); break;
     case 'attention': L.push('📣 투표로 처형되면 혼자 우승해요!'); break;
     case 'lucky': { if (!p.s.luckyNum) p.s.luckyNum = 1 + Math.floor(Math.random() * 50); L.push(`🎰 내 번호는 ${p.s.luckyNum}번! 매일 밤 D50(1~50) 주사위를 굴려 같은 수가 나오면 혼자 우승해요.`); break; }
