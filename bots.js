@@ -402,7 +402,7 @@ function botNight(room, p) {
   const ok = act(room, p, body);
   const A = ai(room);
   if (ok && U.canAttackAsMafia(room, p)) { A.tried[room.day] = id; A.lastKill = id; }
-  if (ok && p.role === 'detective') pm(p).detA = id;
+  if (ok && effRole(p) === 'detective') pm(p).detA = id;
 }
 
 // 저격수(마피아): 낮에, 공개적으로 직업을 주장하고 믿을 만한 사람을 그 직업으로 지목 (틀리면 자신이 죽는다)
@@ -686,7 +686,7 @@ function botVoteAbility(room, p) {
     const mates = cands.filter((c) => c === p || knownMate(p, c));
     const police = cands.filter((c) => !knownMate(p, c) && c !== p && claimedRole(room, c.id, 'police'));
     t = (police.length && chance(0.5)) ? rnd(police) : (mates.length ? rnd(mates) : rnd(cands));
-  } else if (p.role === 'detective') { // 믿을 만한 사람과 비교
+  } else if (U.dayRole(p) === 'detective') { // 믿을 만한 사람과 비교
     const ref = best(cands, (c) => -sus(room, p, c) + (b.checks[c.id] === 'clean' ? 100 : 0), 2);
     t = ref;
   } else t = best(cands.filter((c) => !b.checks[c.id]), (c) => sus(room, p, c), lv(room, p).noise) || rnd(cands); // 밀고자: 의심스러운 사람
@@ -704,19 +704,19 @@ function botConfirm(room, p) {
   const T = room.defense && U.byId(room, room.defense.id);
   if (!T || T === p) return;
   if (room.judgeOnly) { // 최후의 반론이 꺼진 판: 판사 봇만 가끔 판결
-    if (p.role === 'judge' && U.usesLeft(room, p, 'judge') > 0 && !room.judgeVerdict && chance(0.4)) { sync(room, p); act(room, p, { type: 'judge', verdict: chance(Math.max(0.12, Math.min(0.9, 0.55 + sus(room, p, T) / 120))) ? 'yes' : 'no' }); }
+    if (U.dayRole(p) === 'judge' && U.usesLeft(room, p, 'judge') > 0 && !room.judgeVerdict && chance(0.4)) { sync(room, p); act(room, p, { type: 'judge', verdict: chance(Math.max(0.12, Math.min(0.9, 0.55 + sus(room, p, T) / 120))) ? 'yes' : 'no' }); }
     return;
   }
   if (!E.confirmVoters(room).includes(p)) return;
   sync(room, p);
   const L = lv(room, p);
   let yes;
-  if (p.role === 'prosecutor') yes = chance(0.85); // 검사는 찬성, 변호사는 반대 쪽
-  else if (p.role === 'lawyer') yes = chance(0.15);
+  if (U.dayRole(p) === 'prosecutor') yes = chance(0.85); // 검사는 찬성, 변호사는 반대 쪽
+  else if (U.dayRole(p) === 'lawyer') yes = chance(0.15);
   else if (mafiaSide(p) && knownMate(p, T)) yes = chance(L.mistake);
   else if (room.votes[p.id] === T.id) yes = chance(0.92);
   else { const W = L.wise || 0; const sc = W >= 0.7 ? 0.6 * sus(room, p, T, { noSocial: true }) + 0.4 * sus(room, p, T) : sus(room, p, T); yes = chance(Math.max(0.12, Math.min(0.93, 0.58 + sc / 120))); }
-  if (p.role === 'judge' && U.usesLeft(room, p, 'judge') > 0 && !room.judgeVerdict && chance(0.55)) { act(room, p, { type: 'judge', verdict: yes ? 'yes' : 'no' }); return; } // 판사: 가끔 직접 판결
+  if (U.dayRole(p) === 'judge' && U.usesLeft(room, p, 'judge') > 0 && !room.judgeVerdict && chance(0.55)) { act(room, p, { type: 'judge', verdict: yes ? 'yes' : 'no' }); return; } // 판사: 가끔 직접 판결
   act(room, p, { type: 'confirm', choice: yes ? 'yes' : 'no' });
 }
 function botVote(room, p) {
@@ -808,14 +808,14 @@ function schedule(room) {
     } else if (phase === 'vote') at(0.2, 0.85, () => botVote(room, p));
     else if (phase === 'defense') {
       if (room.defense && room.defense.id === p.id) at(0.1, 0.4, () => botDefense(room, p));
-      else if ((p.role === 'prosecutor' || p.role === 'lawyer') && room.defense) at(0.15, 0.6, () => { // 검사·변호사: 능력을 쓸지 고른다
+      else if ((U.dayRole(p) === 'prosecutor' || U.dayRole(p) === 'lawyer') && room.defense) at(0.15, 0.6, () => { // 검사·변호사: 능력을 쓸지 고른다
         sync(room, p); const T = U.byId(room, room.defense.id); if (!T) return;
         const s = sus(room, p, T);
-        const use = p.role === 'prosecutor' ? chance(s > -20 ? 0.85 : 0.3) : chance(s < 40 ? 0.7 : 0.25);
+        const use = U.dayRole(p) === 'prosecutor' ? chance(s > -20 ? 0.85 : 0.3) : chance(s < 40 ? 0.7 : 0.25);
         act(room, p, { type: 'extra', use });
       });
     }
-    else if (phase === 'speak') { if (room.speaker === p.id) at(0.1, 0.4, () => say(room, p, p.role === 'prosecutor' ? rnd(['이 사람은 정말 수상해요. 처형에 찬성해 주세요.', '지금까지의 행동을 보면 마피아일 가능성이 높아요. 찬성해 주세요.']) : rnd(['성급한 처형은 위험해요. 반대에 투표해 주세요.', '확실한 증거가 없어요. 이번에는 반대해 주세요.']))); }
+    else if (phase === 'speak') { if (room.speaker === p.id) at(0.1, 0.4, () => say(room, p, U.dayRole(p) === 'prosecutor' ? rnd(['이 사람은 정말 수상해요. 처형에 찬성해 주세요.', '지금까지의 행동을 보면 마피아일 가능성이 높아요. 찬성해 주세요.']) : rnd(['성급한 처형은 위험해요. 반대에 투표해 주세요.', '확실한 증거가 없어요. 이번에는 반대해 주세요.']))); }
     else if (phase === 'rps') { if ((room.rps && room.rps.matches || []).some((m) => m.b === p.id || m.t === p.id)) at(0.1, 0.7, () => act(room, p, { type: 'rps', sign: rnd(['r', 'p', 's']) })); }
     else if (phase === 'confirm') at(0.15, 0.75, () => botConfirm(room, p));
   }

@@ -107,7 +107,7 @@ function voteOptions(room, p) {
   const others = A.filter((x) => x.id !== p.id);
   const pick = (room.voteActs[p.id] || {}).target || null;
   const o = (label, list) => ({ label, targets: ids(list), pick });
-  switch (p.role) {
+  switch (U.dayRole(p)) {
     case 'detective': return p.s.detA ? o('🕵 비교할 두 번째 사람 (투표시간)', A) : null;
     case 'informant': return o('📢 밀고할 사람 (마피아인지 확인)', others);
     case 'forger': return p.contacted ? o('🖋 조사 결과를 위조할 사람', A) : null;
@@ -264,7 +264,7 @@ function infoLines(room, p) {
       else L.push('🔍 밤마다 1명을 골라 의사인지 확인하세요. 의사면 접선해요.');
       break;
     }
-    case 'magician': L.push(p.s.loan ? `🎩 오늘 밤 쓸 수 있는 직업: ${ROLE[p.s.loan].name}` : U.magicReady(room, p) ? '🎩 밤마다 마술을 쓸지 골라요. 쓰면 시민 팀 직업 하나를 랜덤으로 얻어 그날 밤 써요. (쓰고 나면 하루 쉬어요)' : `🎩 쉬는 중이에요. ${p.s.magicUsed + 2}일차 밤에 다시 쓸 수 있어요.`); break;
+    case 'magician': L.push(p.s.dayLoan && !p.s.loan ? `🎩 오늘 낮에 쓸 수 있는 직업: ${ROLE[p.s.dayLoan].name} (${ROLE[p.s.dayLoan].desc})` : p.s.loan ? `🎩 오늘 밤 쓸 수 있는 직업: ${ROLE[p.s.loan].name}` : U.magicReady(room, p) ? '🎩 밤마다 마술을 쓸지 골라요. 쓰면 시민 팀 직업 하나를 랜덤으로 얻어 하루 동안(그날 밤~다음 낮) 써요. (쓰고 나면 하루 쉬어요)' : `🎩 쉬는 중이에요. ${p.s.magicUsed + 2}일차 밤에 다시 쓸 수 있어요.`); break;
     case 'evil': L.push(p.contacted ? '😈 마피아와 접선했어요. 특별한 능력은 없지만 마피아 팀과 밤에 대화할 수 있어요.' : '🤝 밤마다 1명을 골라 마피아인지 확인하세요. 마피아면 접선해서 마피아 팀과 대화할 수 있어요. (특별한 능력은 없어요)'); break;
     case 'attention': L.push('📣 투표로 처형되면 혼자 우승해요!'); break;
     case 'lucky': { if (!p.s.luckyNum) p.s.luckyNum = 1 + Math.floor(Math.random() * 50); L.push(`🎰 내 번호는 ${p.s.luckyNum}번! 매일 밤 D50(1~50) 주사위를 굴려 같은 수가 나오면 혼자 우승해요.`); break; }

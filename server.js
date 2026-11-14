@@ -530,7 +530,7 @@ function advance(room) {
       setPhase(room, 'defense');
       return;
     }
-    if (!room.settings.finalDefense && t.leader && t.leader.alive && alivePlayers(room).some((x) => x.role === 'judge' && x !== t.leader && U.usesLeft(room, x, 'judge') > 0)) {
+    if (!room.settings.finalDefense && t.leader && t.leader.alive && alivePlayers(room).some((x) => U.dayRole(x) === 'judge' && x !== t.leader && U.usesLeft(room, x, 'judge') > 0)) {
       // 최후의 반론이 꺼져 있어도 판사는 판결할 수 있다: 처형 직전에 짧은 시간을 준다 (판결이 없으면 그대로 처형)
       E.announceTally(room, t);
       room.defense = { id: t.leader.id }; room.judgeOnly = true;
@@ -543,7 +543,7 @@ function advance(room) {
     if (!E.confirmVoters(room).length) { finishVote(room, { ok: true }); return; } // 투표할 사람이 없으면 그대로 진행
     const T = room.defense && byId(room, room.defense.id);
     // 검사·변호사가 능력을 쓰겠다고 고른 경우에만 추가 발언 (아무도 안 썼으면 바로 찬반투표)
-    room.speakQueue = ['prosecutor', 'lawyer'].map((r) => alivePlayers(room).find((x) => x.role === r && x !== T && room.extra && room.extra[x.id])).filter(Boolean).map((x) => x.id);
+    room.speakQueue = ['prosecutor', 'lawyer'].flatMap((r) => alivePlayers(room).filter((x) => U.dayRole(x) === r && x !== T && room.extra && room.extra[x.id])).map((x) => x.id);
     nextSpeakOrConfirm(room);
   } else if (room.phase === 'speak') {
     room.speaker = null;
@@ -910,7 +910,7 @@ function handleAction(room, p, b) {
     }
     case 'extra': { // ⚔️ 검사·변호사: 최후의 반론 시간에 능력(추가 발언 + 찬반 2표)을 쓸지 고른다
       if (room.phase !== 'defense' || !room.defense) fail('최후의 반론 시간에만 고를 수 있어요.');
-      if ((p.role !== 'prosecutor' && p.role !== 'lawyer') || !p.alive) fail('검사·변호사만 쓸 수 있어요.');
+      if ((U.dayRole(p) !== 'prosecutor' && U.dayRole(p) !== 'lawyer') || !p.alive) fail('검사·변호사만 쓸 수 있어요.');
       if (room.defense.id === p.id) fail('처형 후보는 쓸 수 없어요.');
       room.extra = room.extra || {}; room.extra[p.id] = !!b.use;
       broadcastState(room);
@@ -939,7 +939,7 @@ function handleAction(room, p, b) {
     }
     case 'judge': { // ⚖️ 판사: 찬반투표의 결과를 직접 결정 (1회)
       if (room.phase !== 'confirm' || !room.defense) fail('판결은 찬반투표 시간에만 내릴 수 있어요.');
-      if (p.role !== 'judge' || !p.alive) fail('판사만 쓸 수 있어요.');
+      if (U.dayRole(p) !== 'judge' || !p.alive) fail('판사만 쓸 수 있어요.');
       if (U.usesLeft(room, p, 'judge') <= 0) fail('판결할 수 있는 횟수를 모두 썼어요.');
       if (room.judgeVerdict) fail('이번 처형은 이미 판결이 내려졌어요.');
       if (room.defense.id === p.id) fail('처형 후보는 판결할 수 없어요.');

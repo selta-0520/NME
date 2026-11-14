@@ -34,7 +34,7 @@ function confirmTally(room) {
   for (const [pid, c] of Object.entries(room.confirm || {})) {
     const v = U.byId(room, pid);
     if (!v || !v.alive || v === T || !AB.canVote(room, v)) continue;
-    if (c === 'yes') yes += v.role === 'prosecutor' ? 2 : weight(v); else if (c === 'no') no += v.role === 'lawyer' ? 2 : weight(v); // 검사: 찬성 2표 / 변호사: 반대 2표
+    if (c === 'yes') yes += U.dayRole(v) === 'prosecutor' ? 2 : weight(v); else if (c === 'no') no += U.dayRole(v) === 'lawyer' ? 2 : weight(v); // 검사: 찬성 2표 / 변호사: 반대 2표
   }
   if (room.judgeVerdict) return { yes, no, ok: room.judgeVerdict.ok, judged: true, judge: room.judgeVerdict.by }; // 판사의 판결이 우선
   return { yes, no, ok: yes > no };
@@ -100,7 +100,7 @@ function resolveVote(room, opts) {
     } else if (p.role === 'forger' && p.contacted) {
       U.touch(room, p, t); forgeList.push(t);
       U.priv(room, p, `🖋 ${t.name}님의 조사 결과를 위조했습니다. (다음 투표 때까지 유지)`);
-    } else if (p.role === 'detective' && p.s.detA) {
+    } else if (U.dayRole(p) === 'detective' && p.s.detA) {
       const a = U.byId(room, p.s.detA);
       if (a) {
         U.touch(room, p, t);

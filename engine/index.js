@@ -1,5 +1,5 @@
 'use strict';
-const { ROLE: ROLE_, LOANABLE } = require('../roles');
+const { ROLE: ROLE_, LOANABLE, MAGIC_DAY } = require('../roles');
 // 게임 엔진 묶음. server.js 는 이 파일만 불러 씁니다.
 const U = require('./util');
 const AB = require('./abilities');
@@ -25,11 +25,20 @@ function setNightAct(room, p, b) {
   // 마술사: 능력을 쓰기로 하면 바로 시민 팀 직업 하나를 랜덤으로 얻는다 (그날 밤 그 능력을 쓸 수 있다)
   if (p.role === 'magician' && !p.s.loan && act.mode === 'on') {
     const en = room.settings.enabledRoles;
-    const pool = LOANABLE.filter((k) => ROLE_[k] && ROLE_[k].team === 'citizen' && en.includes(k) && k !== 'magician');
+    // 밤 능력 + 낮(아침) 능력 직업 모두 후보 (낮 능력은 이 밤이 지나고 맞는 낮까지 쓴다)
+    const pool = LOANABLE.concat(MAGIC_DAY).filter((k, i, a) => a.indexOf(k) === i && ROLE_[k] && ROLE_[k].team === 'citizen' && en.includes(k) && k !== 'magician' && (k !== 'prosecutor' && k !== 'lawyer' || room.settings.finalDefense));
     if (!pool.length) { U.priv(room, p, '🎩 이번 판에는 얻을 수 있는 시민 팀 능력이 없어요.'); return; }
     const k = U.pick(pool);
-    p.s.loan = k; p.s.lnS = {}; p.s.magicUsed = room.day;
+    p.s.magicUsed = room.day;
     delete room.night.acts[p.id];
+    if (MAGIC_DAY.includes(k)) {
+      p.s.dayLoan = k; if (p.s.uc) p.s.uc[k] = 0;
+      if (k === 'detective') { p.s.loan = k; p.s.lnS = {}; } // 탐정은 밤에 첫 번째 사람을 고르고, 낮 투표시간에 두 번째 사람을 고른다
+      const when = k === 'detective' ? '오늘 밤에 첫 번째 사람을 고르고, 다음 낮 투표시간에 두 번째 사람을 골라요' : '다음 낮에';
+      U.priv(room, p, `🎩 마술 성공! "${ROLE_[k].name}"의 능력을 얻었어요. ${when} 쓸 수 있어요. (${ROLE_[k].desc})`);
+      return;
+    }
+    p.s.loan = k; p.s.lnS = {};
     U.priv(room, p, `🎩 마술 성공! 오늘 밤 "${ROLE_[k].name}"의 능력을 쓸 수 있어요. (${ROLE_[k].desc})`);
   }
 }
@@ -64,8 +73,8 @@ function meView(room, p) {
       me.predict = { open: room.phase === 'night' && room.day === 1, ids: room.players.filter((x) => x !== p).map((x) => x.id), guesses: p.guess || {} };
     }
   }
-  if (room.phase === 'confirm' && p.alive && p.role === 'judge' && U.usesLeft(room, p, 'judge') > 0 && !room.judgeVerdict && room.defense && room.defense.id !== p.id) me.judge = { open: true };
-  if ((p.role === 'prosecutor' || p.role === 'lawyer') && p.alive && room.defense && ['defense', 'speak', 'confirm'].includes(room.phase) && room.defense.id !== p.id) me.extra = { open: room.phase === 'defense', use: !!(room.extra && room.extra[p.id]) };
+  if (room.phase === 'confirm' && p.alive && U.dayRole(p) === 'judge' && U.usesLeft(room, p, 'judge') > 0 && !room.judgeVerdict && room.defense && room.defense.id !== p.id) me.judge = { open: true };
+  if ((U.dayRole(p) === 'prosecutor' || U.dayRole(p) === 'lawyer') && p.alive && room.defense && ['defense', 'speak', 'confirm'].includes(room.phase) && room.defense.id !== p.id) me.extra = { open: room.phase === 'defense', use: !!(room.extra && room.extra[p.id]) };
   if (room.phase === 'day' && p.alive && p.role === 'sniper' && p.s.sniped !== room.day) { // 저격수: 낮에 직업을 맞혀 저격
     const en = room.settings.enabledRoles.filter((k) => ROLE_[k]);
     for (const k of ['citizen', 'mafia', 'evil']) if (!en.includes(k)) en.push(k);

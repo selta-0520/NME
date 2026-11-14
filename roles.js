@@ -54,7 +54,7 @@ const ROLES = [
   R('vigilante', '자경단', 'citizen', '밤마다 1명을 골라 저격할 수 있다. 그 사람이 마피아 팀이면 죽고, 마피아 팀이 아니면 자신이 죽는다. (둘 다 "저격으로 인해 사망"으로 표시된다)'),
   R('pharmacist', '약사', 'citizen', '밤마다 1명을 골라 의사인지 확인하고, 의사이면 접선한다. 접선한 의사가 죽으면 밤마다 1명(자신 제외)에게 약을 줄 수 있다. 약을 받은 사람은 다음 날 밤 공격을 한 번 치료받는다. 이미 독에 걸린 사람에게 주면 약이 독을 없애는 데 쓰인다. 의사가 나오지 않게 설정된 판에서는 나오지 않는다.'),
   R('eavesdropper', '도청꾼', 'citizen', '밤마다 1명을 골라 그 사람이 속한 비밀 채팅을 도청한다. 채팅 내용만 볼 수 있고, 어느 팀의 채팅인지는 알 수 없다.'),
-  R('magician', '마술사', 'citizen', '밤마다 능력을 쓸지 고른다. 쓰면 이번 판에 나오는 시민 팀 직업 중 하나를 랜덤으로 얻어 그날 밤 쓸 수 있다. 쓴 뒤에는 하루 쉰다. (2일차 밤에 사용 → 4일차 밤에 다시 사용 가능)'),
+  R('magician', '마술사', 'citizen', '밤마다 능력을 쓸지 고른다. 쓰면 이번 판에 나오는 시민 팀 직업(밤 능력·낮 능력 모두) 중 하나를 랜덤으로 얻어 하루 동안(그날 밤~다음 낮) 쓸 수 있다. 낮 능력 직업은 탐정·판사·검사·변호사다. 쓴 뒤에는 하루 쉰다. (2일차 밤에 사용 → 4일차 밤에 다시 사용 가능)'),
 
   // ---------- 중립 팀 ----------
   R('madman', '미치광이', 'neutral', '밤마다 능력을 쓸지 말지 고를 수 있다. 쓰면 랜덤으로 아무나(자신 포함) 죽인다. 처형 투표에서 딱 1번 살아남는다. 끝까지 살아남는 것이 목표다.'),
@@ -77,9 +77,11 @@ const ROLES = [
 const ONE = new Set(['couple', 'beggar', 'rich', 'prosecutor', 'lawyer', 'bettor', 'attention', 'lucky', 'joker', 'destroyer', 'revolutionary']);
 // 도둑이 훔칠 수 있는 밤 능력 (나머지는 훔쳐도 쓸 수 없다)
 const LOANABLE = ['spy', 'police', 'doctor', 'reporter', 'thug', 'medium', 'terrorist', 'priest', 'programmer', 'ninja', 'bodyguard', 'destroyer', 'ghost', 'scientist', 'madman', 'angel', 'inspector', 'vigilante', 'eavesdropper'];
+// 마술사가 추가로 얻을 수 있는 "낮(아침) 능력" 직업 (그날 밤~다음 낮까지 하루 동안 쓴다)
+const MAGIC_DAY = ['detective', 'judge', 'prosecutor', 'lawyer'];
 const roleCap = (key) => (key === 'mafia' || key === 'citizen' ? 20 : ONE.has(key) ? 1 : 4);
 
 const ROLE = {};
 for (const r of ROLES) ROLE[r.key] = r;
 
-module.exports = { ROLES, ROLE, TEAM_NAMES, roleCap, LOANABLE };
+module.exports = { ROLES, ROLE, TEAM_NAMES, roleCap, LOANABLE, MAGIC_DAY };

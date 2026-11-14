@@ -9,6 +9,7 @@ function startNight(room) {
   room.nightFromMsg = room.msgId || 0; // 도청꾼: 이 밤에 오간 대화만 도청한다
   room.touches = [];
   for (const p of U.alive(room)) {
+    if (p.s.dayLoan) { p.s.dayLoan = null; if (p.role === 'magician') U.priv(room, p, '🎩 낮 동안의 마술이 끝났습니다.'); } // 마술사가 얻은 낮 능력은 하루만
     // 암살자: 2일차 밤부터 매일 밤 랜덤 타겟 (접선 전)
     if (p.role === 'assassin' && !p.contacted && room.day >= 2) {
       const cand = U.alive(room).filter((x) => x !== p && !U.inMafiaChat(x));
@@ -472,11 +473,12 @@ function resolveNight(room) {
     p.role = sw.role; p.s = sw.s; p.loaning = false;
     if (ls && ls.known) p.s.known = Object.assign(p.s.known || {}, ls.known);
     if (ls && ls.report) p.s.report = ls.report;
+    if (p.role === 'magician' && ls && ls.detA) p.s.detA = ls.detA; // 마술사가 얻은 탐정: 밤에 고른 사람을 투표시간까지 기억
     p.s.loan = null; p.s.lnS = null;
     if (p.role === 'thief') priv(p, '🧤 훔친 능력을 사용했습니다. 이제 다시 다른 사람의 능력을 훔칠 수 있어요.');
-    else priv(p, `🎩 마술이 끝났습니다. ${day + 2}일차 밤에 다시 쓸 수 있어요.`);
+    else priv(p, `🎩 마술이 끝났습니다.${p.s.detA ? ' (탐정: 투표시간에 두 번째 사람을 골라요)' : ''} ${day + 2}일차 밤에 다시 쓸 수 있어요.`);
   }
-  for (const p of room.players) if (p.role === 'magician' && p.s.loan) { p.s.loan = null; p.s.lnS = null; priv(p, `🎩 얻은 능력을 쓰지 않아 마술이 끝났습니다. ${day + 2}일차 밤에 다시 쓸 수 있어요.`); }
+  for (const p of room.players) if (p.role === 'magician' && p.s.loan) { p.s.loan = null; p.s.lnS = null; if (p.s.dayLoan === 'detective') p.s.dayLoan = null; priv(p, `🎩 얻은 능력을 쓰지 않아 마술이 끝났습니다. ${day + 2}일차 밤에 다시 쓸 수 있어요.`); }
 
   // ---- 10. 아침 공지
   U.sys(room, `☀️ ${day}일차 아침이 밝았습니다.`);

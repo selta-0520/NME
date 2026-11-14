@@ -91,7 +91,8 @@ U.survive = (room, p) => {
 U.destroyLimit = (room) => { const c = (room.settings && room.settings.destroyMax) | 0; return c > 0 ? c : Math.max(1, Math.floor((room.startN || room.players.length) / 3)); };
 // 횟수 제한이 있는 능력: 방 설정(settings.uses)으로 조절 (훔친 능력은 항상 1회)
 U.USE_KEYS = ['reporter', 'agitator', 'priest', 'angel', 'scientist', 'judge', 'soldier', 'madman', 'guardian'];
-U.maxUses = (room, p, key) => (p && p.loaning ? 1 : Math.max(1, ((room.settings.uses || {})[key]) | 0 || 1));
+U.dayRole = (p) => (p.role === 'magician' && p.s && p.s.dayLoan ? p.s.dayLoan : p.role); // 낮 능력 기준 직업 (마술사가 얻은 낮 능력 포함)
+U.maxUses = (room, p, key) => (p && (p.loaning || (p.role === 'magician' && p.s.dayLoan)) ? 1 : Math.max(1, ((room.settings.uses || {})[key]) | 0 || 1));
 U.usedCount = (p, key) => (p.s.uc || {})[key] || 0;
 U.useOne = (p, key) => { p.s.uc = p.s.uc || {}; p.s.uc[key] = (p.s.uc[key] || 0) + 1; };
 U.usesLeft = (room, p, key) => U.maxUses(room, p, key) - U.usedCount(p, key);
