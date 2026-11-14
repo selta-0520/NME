@@ -104,6 +104,16 @@ U.bettorNeed = (room) => Math.max(1, Math.ceil((room.startN || room.players.leng
 // 약사: 접선한 의사가 죽었는지(= 약을 줄 수 있는 상태인지)
 U.pharmaArmed = (room, p) => { if (p.s.armed) return true; const d = p.s.doc && U.byId(room, p.s.doc); if (d && !d.alive) { p.s.armed = true; return true; } return false; };
 U.heroNeed = (room) => Math.max(1, ((room.settings && room.settings.heroStack) | 0) || 3); // 히어로 전향에 필요한 선행 스택
+// 커플·(거지, 부자)는 같은 묶음 번호(pairId)로 짝을 맺는다. 여러 쌍이 있어도 각자의 짝만 찾는다.
+U.pairUp = (room, players) => {
+  room.pairSeq = room.pairSeq || 0;
+  const link = (a, b) => { const id = ++room.pairSeq; a.s.pairId = id; b.s.pairId = id; };
+  const cs = players.filter((p) => p.role === 'couple');
+  for (let i = 0; i + 1 < cs.length; i += 2) link(cs[i], cs[i + 1]);
+  const bs = players.filter((p) => p.role === 'beggar'), rs = players.filter((p) => p.role === 'rich');
+  for (let i = 0; i < Math.min(bs.length, rs.length); i++) link(bs[i], rs[i]);
+};
+U.mateOf = (room, p, role) => room.players.find((x) => x !== p && x.role === role && (p.s.pairId == null || x.s.pairId === p.s.pairId));
 // 히어로·빌런: 서로 접선해 슈퍼가 된 짝 (둘 다 상태가 맞아야 한다)
 U.superMate = (room, p) => {
   if (!p.s || !p.s.sup || !p.s.mate || (p.role !== 'hero' && p.role !== 'villain')) return null;

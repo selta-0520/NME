@@ -138,8 +138,10 @@ function resolveVote(room, opts) {
 
   // 혁명가: 4일차 낮까지 아무도 능력을 쓰지 않았다면 단독 우승
   if (day >= 4) {
-    const rev = room.players.find((x) => x.alive && x.role === 'revolutionary' && !x.s.joined);
-    if (rev && !room.pendingWin) room.pendingWin = { kind: 'solo', ids: [rev.id], text: `✊ 혁명가 ${rev.name}님이 혼자 우승했습니다!` };
+    const revs = room.players.filter((x) => x.alive && x.role === 'revolutionary' && !x.s.joined);
+    if (revs.length && !room.pendingWin) room.pendingWin = revs.length === 1
+      ? { kind: 'solo', ids: [revs[0].id], text: `✊ 혁명가 ${revs[0].name}님이 혼자 우승했습니다!` }
+      : { kind: 'duo', ids: revs.map((x) => x.id), text: `✊ 혁명가 ${U.names(revs)}님이 함께 우승했습니다!` };
   }
 }
 

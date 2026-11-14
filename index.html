@@ -1091,6 +1091,8 @@ function useField(key, label) {
 }
 function sendPatch(patch) { act('settings', { patch }); }
 // 거지 & 부자, 히어로 & 빌런은 한 묶음: 한 번 고르면 둘이 같이 선택돼요
+const PAIRLEAD = new Set(['couple', 'beggar', 'hero']); // 한 쌍(2명) 단위로 나오는 직업 → 인원은 2씩 늘어나요
+const unitOf = (key) => (PAIRLEAD.has(key) ? 2 : 1);
 const PAIR2 = { beggar: 'rich', hero: 'villain' }; // 한 묶음으로 배정되는 직업 쌍
 const withPair = (keys) => keys.flatMap((k) => (PAIR2[k] ? [k, PAIR2[k]] : [k]));
 function rolePatch() {
@@ -1103,15 +1105,15 @@ function forcedPatch() {
 }
 const isPairRich = (r) => Object.values(PAIR2).includes(r.key);
 function stepper(key, kind) {
-  const cap = meta.caps[key] || 1;
+  const cap = meta.caps[key] || 1, unit = unitOf(key); // 저장은 "묶음 수", 화면은 "명"
   const set = (nv) => {
     if (!canEditSettings()) return;
     const s = st.settings, cur = (kind === 'min' ? s.roleMin : s.roleMax)[key] | 0;
-    nv = Math.max(0, Math.min(cap, Math.round(Number(nv)) || 0));
+    nv = Math.max(0, Math.min(cap, Math.round((Number(nv) || 0) / unit)));
     if (nv !== cur) sendPatch({ [kind === 'min' ? 'roleMin' : 'roleMax']: { [key]: nv } }); else syncSettings(true);
   };
-  const val = h('input', { type: 'number', inputmode: 'numeric', class: 'numin', min: 0, max: cap, 'data-cnt': kind + ':' + key, value: '0', onchange: (e) => set(e.target.value) });
-  const go = (d) => set(((kind === 'min' ? st.settings.roleMin : st.settings.roleMax)[key] | 0) + d);
+  const val = h('input', { type: 'number', inputmode: 'numeric', class: 'numin', min: 0, max: cap * unit, step: unit, 'data-cnt': kind + ':' + key, value: '0', onchange: (e) => set(e.target.value) });
+  const go = (d) => set((((kind === 'min' ? st.settings.roleMin : st.settings.roleMax)[key] | 0) + d) * unit);
   return h('span', { class: 'step' }, kind === 'min' ? '최소' : '최대',
     h('button', { class: 'ghost', 'data-step': kind + ':' + key, onclick: () => go(-1) }, '−'), val,
     h('button', { class: 'ghost', 'data-step': kind + ':' + key, onclick: () => go(1) }, '+'));
@@ -1178,7 +1180,7 @@ function buildSettings() {
     h('h3', null, '🎭 사용할 직업'),
     h('div', { class: 'note' }, '체크한 직업만 게임에 나와요. 마피아·시민도 끌 수 있어요. 커플은 2명이 함께, "거지 & 부자"·"히어로 & 빌런"은 한 번 체크하면 둘이 함께 나와요. 인원이 적으면 모든 직업이 나오지는 않아요.'),
     h('div', { class: 'note', style: 'margin-top:4px' }, '⭐ "필수 등장"을 켜면 그 직업은 팀 최대 인원을 넘더라도 최소 1명은 무조건 나와요. (인원이 모자라면 못 넣을 수 있어요. 거지·부자, 히어로·빌런은 함께 켜져요)'),
-    h('div', { class: 'note', style: 'margin-top:4px' }, '👥 "인원"의 최소·최대로 직업마다 몇 명까지 나올지 정할 수 있어요. 최소를 1 이상으로 하면 필수 등장과 같아요. (마피아는 켜 두면 항상 1명 이상 나와요)'),
+    h('div', { class: 'note', style: 'margin-top:4px' }, '👥 "인원"의 최소·최대로 직업마다 몇 명까지 나올지 정할 수 있어요. 최소를 1 이상으로 하면 필수 등장과 같아요. 커플·거지&부자·히어로&빌런은 한 쌍(2명)씩 나와서 인원이 2씩 늘어요. (마피아는 켜 두면 항상 1명 이상 나와요)'),
     h('div', { id: 'warns' }));
 
   for (const team of ['mafia', 'citizen', 'neutral']) {
@@ -1201,8 +1203,8 @@ function buildSettings() {
           h('div', { class: 'rn' }, roleTitle(r), r.fixed ? h('span', { class: 'soon' }, '기본') : null, r.impl ? null : h('span', { class: 'soon' }, '준비 중')),
           ...roleDescEls(r, 'rd'),
           usable ? h('label', { class: 'forced' }, fc, '⭐ 필수 등장') : null,
-          usable && (meta.caps[r.key] || 1) > 1 ? h('div', { class: 'cnts' }, '👥 인원', stepper(r.key, 'min'), stepper(r.key, 'max')) : null,
-          usable && (meta.caps[r.key] || 1) <= 1 ? h('div', { class: 'fixedcnt' }, '👥 인원: 최대 1명 (고정)') : null)));
+          usable ? h('div', { class: 'cnts' }, '👥 인원', stepper(r.key, 'min'), stepper(r.key, 'max')) : null,
+          usable && unitOf(r.key) === 2 ? h('div', { class: 'fixedcnt' }, '※ 한 쌍(2명)이 함께 나오기 때문에 인원이 2명씩 늘어나요.') : null)));
     }
   }
   syncSettings(true);
@@ -1234,7 +1236,7 @@ function syncSettings(force) {
   }
   for (const el of sheet.querySelectorAll('[data-cnt]')) {
     const [kind, key] = el.getAttribute('data-cnt').split(':');
-    if (document.activeElement !== el) el.value = String((kind === 'min' ? s.roleMin : s.roleMax)[key] | 0);
+    if (document.activeElement !== el) el.value = String(((kind === 'min' ? s.roleMin : s.roleMax)[key] | 0) * unitOf(key));
     el.disabled = !host || !s.enabledRoles.includes(key);
   }
   for (const b of sheet.querySelectorAll('button[data-step]')) b.disabled = !host || !s.enabledRoles.includes(b.getAttribute('data-step').split(':')[1]);

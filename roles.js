@@ -46,8 +46,8 @@ const ROLES = [
   R('bodyguard', '경호원', 'citizen', '밤마다 1명을 지킨다. 그 사람이 공격받으면 공격을 대신 받고, 공격한 사람의 정체가 모든 플레이어에게 공개된다. (직업은 알려지지 않는다)'),
   R('angel', '사제', 'citizen', '(1회용) 밤에 산 사람 1명(자신 포함)에게 "성스러운 가호"를 내린다. 가호를 받은 사람은 이번 판 동안 처음 받는 공격 1번을 무효로 만든다. (공격 종류와 상관없이 막아 준다) 누구에게 가호를 내렸는지는 사제만 알 수 있다.'),
   R('judge', '판사', 'citizen', '(1회용) 처형 후보가 정해지면 판결할 수 있다. 처형의 찬성/반대를 직접 결정하고, 판결을 내리면 판사의 정체가 공개된다. (최후의 반론이 켜져 있으면 찬반투표 시간에, 꺼져 있으면 처형 직전 짧은 시간에 쓸 수 있다)'),
-  R('prosecutor', '검사', 'citizen', '(변호사와 함께 배정, 최후의 반론이 꺼져 있으면 나오지 않는다) 최후의 반론 뒤 반론 시간과 같은 길이의 발언 시간을 추가로 얻는다. (검사가 먼저, 변호사가 다음) 처형 찬반투표에서 찬성표가 2표로 계산된다.'),
-  R('lawyer', '변호사', 'citizen', '(검사와 함께 배정, 최후의 반론이 꺼져 있으면 나오지 않는다) 최후의 반론 뒤 반론 시간과 같은 길이의 발언 시간을 추가로 얻는다. (검사가 먼저, 변호사가 다음) 처형 찬반투표에서 반대표가 2표로 계산된다.'),
+  R('prosecutor', '검사', 'citizen', '(최후의 반론이 꺼져 있으면 나오지 않는다) 최후의 반론 뒤 반론 시간과 같은 길이의 발언 시간을 추가로 얻는다. (검사가 먼저, 변호사가 다음) 처형 찬반투표에서 찬성표가 2표로 계산된다.'),
+  R('lawyer', '변호사', 'citizen', '(최후의 반론이 꺼져 있으면 나오지 않는다) 최후의 반론 뒤 반론 시간과 같은 길이의 발언 시간을 추가로 얻는다. (검사가 먼저, 변호사가 다음) 처형 찬반투표에서 반대표가 2표로 계산된다.'),
   R('witness', '목격자', 'citizen', '밤마다 1명을 지목한다. 그 사람이 그날 밤 공격받았다면 공격자 후보 3명(진짜 1 + 가짜 2)을 알려 준다. 공격받지 않았다면 그것도 알려 준다.'),
   R('executor', '유언집행자', 'citizen', '밤마다 1명을 지목한다. 그 사람이 그날 밤 죽는다면 직업을 알게 되고, 다음 날 아침 약 10초 동안 죽은 사람과 단둘이 대화할 수 있다.'),
   R('guardian', '수호자', 'citizen', '밤에 1명을 지목한다(기본 1회용, 방 설정으로 횟수 조절). 지목된 사람은 그날 투표 후보에서 제외된다. (투표 시간에 쓰는 능력의 대상도 될 수 없다. 단, 그 사람도 투표는 할 수 있다)'),
@@ -76,16 +76,17 @@ const ROLES = [
 ];
 
 // 한 판에 나올 수 있는 직업별 최대 인원 (커플·거지&부자는 1쌍, 단독 승리 직업은 1명)
-const ONE = new Set(['couple', 'beggar', 'rich', 'prosecutor', 'lawyer', 'bettor', 'attention', 'lucky', 'joker', 'destroyer', 'revolutionary', 'hero', 'villain']);
 // 한 쌍으로 함께 배정되는 직업 (앞 = 대표, 뒤 = 짝)
 const PAIR_OF = { beggar: 'rich', hero: 'villain' };
 // 도둑이 훔칠 수 있는 밤 능력 (나머지는 훔쳐도 쓸 수 없다)
 const LOANABLE = ['spy', 'police', 'doctor', 'reporter', 'thug', 'medium', 'terrorist', 'priest', 'programmer', 'ninja', 'bodyguard', 'destroyer', 'ghost', 'scientist', 'madman', 'angel', 'inspector', 'vigilante', 'eavesdropper'];
 // 마술사가 추가로 얻을 수 있는 "낮(아침) 능력" 직업 (그날 밤~다음 낮까지 하루 동안 쓴다)
 const MAGIC_DAY = ['detective', 'judge', 'prosecutor', 'lawyer'];
-const roleCap = (key) => (key === 'mafia' || key === 'citizen' ? 20 : ONE.has(key) ? 1 : 4);
+// 인원 상한 (묶음 직업은 "묶음 수" 기준: 2묶음 = 4명). 한 쌍으로 나오는 직업의 대표 직업
+const PAIR_LEAD = new Set(['couple', 'beggar', 'hero']);
+const roleCap = (key) => (key === 'mafia' || key === 'citizen' ? 20 : PAIR_LEAD.has(key) ? 2 : 4);
 
 const ROLE = {};
 for (const r of ROLES) ROLE[r.key] = r;
 
-module.exports = { ROLES, ROLE, TEAM_NAMES, roleCap, LOANABLE, MAGIC_DAY, PAIR_OF };
+module.exports = { ROLES, ROLE, TEAM_NAMES, roleCap, LOANABLE, MAGIC_DAY, PAIR_OF, PAIR_LEAD };

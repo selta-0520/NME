@@ -166,7 +166,7 @@ function chatInfo(room, p) {
   if (p.role === 'beggar' && !p.s.met) return { ch: null, label: '🙏 거지는 말할 수 없어요' };
   if (room.phase === 'night') {
     if (U.inMafiaChat(p)) return { ch: 'mafia', label: '🔪 마피아 팀 비밀 대화' };
-    if (p.role === 'couple' && room.players.some((x) => x !== p && x.alive && x.role === 'couple')) return { ch: 'couple', label: '💕 커플 비밀 대화' };
+    if (p.role === 'couple' && (() => { const m = U.mateOf(room, p, 'couple'); return m && m.alive; })()) return { ch: 'couple', label: '💕 커플 비밀 대화' };
     if (p.role === 'medium') return { ch: 'dead', label: '🔮 죽은 사람과 대화 (밤)' };
     return { ch: null, label: '🌙 밤에는 말할 수 없어요' };
   }
@@ -188,7 +188,12 @@ function canSeeMsg(room, p, m) {
     case 'priv': return m.to === p.id;
     case 'will': return m.from === p.id || m.to === p.id;
     case 'mafia': return room.phase === 'ended' || U.inMafiaChat(p);
-    case 'couple': return room.phase === 'ended' || p.role === 'couple';
+    case 'couple': { // 같은 커플끼리만 (여러 쌍이 있어도 다른 커플의 대화는 안 보인다)
+      if (room.phase === 'ended') return true;
+      if (p.role !== 'couple') return false;
+      const sd = m.from ? U.byId(room, m.from) : null;
+      return !sd || sd.role !== 'couple' || p.s.pairId == null || sd.s.pairId === p.s.pairId;
+    }
     case 'dead': return room.phase === 'ended' || !p.alive || (p.alive && p.role === 'medium' && !!m.night);
     default: return false;
   }
@@ -202,7 +207,7 @@ function knowsRole(room, v, q) {
   if (U.inMafiaChat(v) && U.inMafiaChat(q)) return true;
   if (v.role === 'informant' && v.contacted && U.inMafiaChat(q)) return true;
   if (q.role === 'informant' && q.contacted && U.inMafiaChat(v)) return true;
-  if (v.role === 'couple' && q.role === 'couple') return true;
+  if (v.role === 'couple' && q.role === 'couple' && (v.s.pairId == null || v.s.pairId === q.s.pairId)) return true;
   if (v.role === 'beggar') return true;
   if (v.s.known && v.s.known[q.id]) return true;
   return false;

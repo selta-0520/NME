@@ -42,7 +42,7 @@ function rerollRoles(room, list, joker, newRole) {
   const teamOfRole = (k) => ROLE[k].team;
   const slots = { mafia: 0, citizen: 0, neutral: 0 };
   for (const p of list) {
-    if (p === joker) continue; // 광대 자리는 시민/마피아가 그대로 받는다
+    if (p.role === 'joker') continue; // 광대 자리는 시민/마피아가 그대로 받는다
     slots[teamOfRole(p.role)]++; // 팀별 인원은 그대로, 직업만 새로 뽑는다
   }
   const maxOf = (k) => (k === 'mafia' || k === 'citizen' ? 99 : (s.roleMax && s.roleMax[k] != null ? Math.max(1, s.roleMax[k] | 0) : 1));
@@ -76,6 +76,8 @@ function jokerShuffle(room, joker) {
   const fakeP = ROLES.filter((r) => r.team === 'neutral' && !present.has(r.key) && r.key !== 'prophet' && r.key !== 'joker').map((r) => r.key);
   const fakeAny = ROLES.filter((r) => !present.has(r.key) && r.key !== 'prophet').map((r) => r.key);
   const fakeRole = (fakeP.length ? U.pick(fakeP) : fakeAny.length ? U.pick(fakeAny) : 'citizen');
+  const jmap = new Map(); // 광대가 여럿이면 각자 시민/마피아가 된다
+  for (const p of list) if (p.role === 'joker') jmap.set(p, p === joker ? newRole : U.pick(['citizen', 'mafia']));
   const before = all.map((p) => `${p.name}(${U.roleName(p.role === 'prophet' ? fakeRole : p.role)})`); // 섞이기 전 직업
   if (room.settings.jokerMode === 'reroll') { // 팀별 인원은 유지하고, 직업은 전체 직업에서 새로 뽑아 나눠 준다
     const picked = U.shuffle(rerollRoles(room, list, joker, newRole));
@@ -84,15 +86,16 @@ function jokerShuffle(room, joker) {
     // 광대는 시민/마피아로, 나머지는 원래 팀 칸을 받는다
     const order = U.shuffle(list.slice());
     for (const p of order) {
-      const team = p === joker ? ROLE[newRole].team : ROLE[p.role].team;
-      const k = p === joker ? newRole : byTeam[team].shift();
+      const team = jmap.has(p) ? ROLE[jmap.get(p)].team : ROLE[p.role].team;
+      const k = jmap.has(p) ? jmap.get(p) : byTeam[team].shift();
       U.setRole(room, p, k, true);
     }
   } else {
-    const pool = U.shuffle(list.map((p) => (p === joker ? newRole : p.role)));
+    const pool = U.shuffle(list.map((p) => (jmap.has(p) ? jmap.get(p) : p.role)));
     list.forEach((p, i) => { U.setRole(room, p, pool[i], true); });
   }
   for (const p of room.players) p.s.known = {};
+  U.pairUp(room, list); // 섞인 뒤 커플·거지·부자 새로 짝 맺기
   for (const p of list) p.baseRole = p.role; // 예언가 판정 기준: 섞인 뒤의 직업
   U.sys(room, room.settings.jokerMode === 'reroll' ? '🃏 광대의 장난으로 살아있는 모든 사람의 직업이 새로 배정되었습니다! 자신의 직업을 다시 확인하세요.' : '🃏 광대의 장난으로 살아있는 모든 사람의 직업이 뒤섞였습니다! 자신의 직업을 다시 확인하세요.');
   room.jokerBefore = before.join(', '); // 게임이 끝난 뒤 공개용으로 보관
@@ -245,11 +248,12 @@ function resolveNight(room) {
         U.touch(room, p, t); break;
       case 'rich':
         U.touch(room, p, t);
-        if (t.role === 'beggar') {
-          p.s.meetDay = day; t.s.meetDay = day; t.s.met = true;
+        if (t.role === 'beggar' && !t.s.met && !p.s.meetWith) {
+          p.s.meetDay = day; t.s.meetDay = day; t.s.met = true; p.s.meetWith = t.id; t.s.meetWith = p.id;
           priv(p, '💰 그 사람은 거지였습니다! 2일 뒤 둘 다 살아있으면 우승합니다.');
           priv(t, '🎉 부자를 만났습니다! 이제 말하고 투표할 수 있고, 투표로 죽을 수도 있어요. 12~17초마다 채팅을 해야 하며 안 하면 "한푼 줍쇼"가 자동으로 전송돼요. 2일 뒤 둘 다 살아있으면 우승합니다.');
-        } else priv(p, `💰 ${t.name}님은 거지가 아닙니다.`);
+        } else if (t.role === 'beggar') priv(p, `💰 ${t.name}님은 거지입니다. 하지만 이미 다른 부자를 만났거나, 당신이 이미 거지를 만났어요.`);
+        else priv(p, `💰 ${t.name}님은 거지가 아닙니다.`);
         break;
       case 'medium':
         priv(p, `🔮 성불 결과: ${t.name}님의 직업은 "${U.roleName(t.role)}"였습니다. (이제 ${t.name}님은 말할 수 없습니다)`);
@@ -402,7 +406,8 @@ function resolveNight(room) {
     if (at.by && !attacked[t.id]) attacked[t.id] = at.by; // 목격자용: 공격받은 사람 기록
     if (!t.alive) continue;
     if (at.kind === 'mafia' && t.role === 'couple') {
-      const partner = U.alive(room).find((x) => x !== t && x.role === 'couple');
+      const mt = U.mateOf(room, t, 'couple');
+      const partner = mt && mt.alive ? mt : null;
       if (partner) { t = partner; if (at.by && !attacked[t.id]) attacked[t.id] = at.by; }
     }
     const g = guard[t.id] || guard[at.t.id]; // 경호원: 지키던 사람 대신 공격을 받고, 공격자의 정체를 밝힌다
@@ -561,11 +566,11 @@ function resolveNight(room) {
   }
 
   // 거지·부자 우승 확인
-  const rich = room.players.find((x) => x.role === 'rich' && x.s.meetDay != null);
-  const beggar = room.players.find((x) => x.role === 'beggar' && x.s.meetDay != null);
-  if (rich && beggar) {
+  for (const rich of room.players.filter((x) => x.role === 'rich' && x.s.meetDay != null)) {
+    const beggar = rich.s.meetWith ? U.byId(room, rich.s.meetWith) : room.players.find((x) => x.role === 'beggar' && x.s.meetDay != null);
+    if (!beggar || beggar.role !== 'beggar') continue;
     if (!rich.alive || !beggar.alive) { rich.s.meetDay = null; beggar.s.meetDay = null; }
-    else if (day >= rich.s.meetDay + 2) {
+    else if (day >= rich.s.meetDay + 2 && !room.pendingWin) {
       room.pendingWin = { kind: 'duo', ids: [rich.id, beggar.id], text: `💰 부자 ${rich.name}님과 거지 ${beggar.name}님이 우승했습니다!` };
     }
   }

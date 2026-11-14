@@ -136,6 +136,7 @@ function assignRoles(room) {
     p.contacted = p.role === 'mafia';
     if (p.role === 'lucky') p.s.luckyNum = 1 + Math.floor(Math.random() * 50);
   });
+  room.pairSeq = 0; U.pairUp(room, room.players); // 커플·거지·부자 짝 맺기
   room.touches = []; room.voteActs = {}; room.pendingWin = null;
   room.startN = n;
   for (const p of room.players) if (p.role === 'follower') U.assignMaster(room, p, true); // 신봉자의 주인 (알림은 게임 시작 때)

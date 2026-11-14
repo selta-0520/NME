@@ -212,8 +212,8 @@ function killPlayer(room, p, how) {
   // 거지와 부자는 운명공동체: 한쪽이 죽으면 다른 쪽도 함께 죽는다
   if (p.role === 'beggar' || p.role === 'rich') {
     const mateRole = p.role === 'beggar' ? 'rich' : 'beggar';
-    const mate = room.players.find((x) => x.alive && x !== p && x.role === mateRole);
-    if (mate) killPlayer(room, mate, `짝인 ${roleName(p.role)} ${p.name}님이 죽어서 함께 사망했습니다. (거지와 부자는 운명공동체)`);
+    const mate = U.mateOf(room, p, mateRole);
+    if (mate && mate.alive) killPlayer(room, mate, `짝인 ${roleName(p.role)} ${p.name}님이 죽어서 함께 사망했습니다. (거지와 부자는 운명공동체)`);
   }
 }
 // 엔진이 쓰는 출력 함수 연결
@@ -270,7 +270,7 @@ function viewFor(room, p) {
     if (room.phase === 'rps') v.rpsCount = (room.rps && room.rps.matches.length) || 0;
     if (room.phase === 'day' && E.AB.activeWill(room, p)) { const w = E.AB.activeWill(room, p); const o = byId(room, w.a === p.id ? w.b : w.a); v.will = { until: w.until, with: o ? o.name : '' }; }
     if (room.phase === 'last' && room.lastBoom) { const t = byId(room, room.lastBoom); v.last = { terrorist: room.lastBoom, name: t ? t.name : '' }; }
-    if (p.alive && p.role === 'beggar' && p.s.met && room.begAt && (room.phase === 'day' || room.phase === 'vote' || room.phase === 'defense' || room.phase === 'speak' || room.phase === 'confirm')) v.begAt = room.begAt;
+    if (p.alive && p.role === 'beggar' && p.s.met && room.begAts && room.begAts[p.id] && (room.phase === 'day' || room.phase === 'vote' || room.phase === 'defense' || room.phase === 'speak' || room.phase === 'confirm')) v.begAt = room.begAts[p.id];
     if ((room.phase === 'defense' || room.phase === 'speak' || room.phase === 'confirm') && room.defense) {
       const T = byId(room, room.defense.id);
       v.defense = { id: room.defense.id, name: T ? T.name : '' };
@@ -301,27 +301,33 @@ function viewFor(room, p) {
 }
 // ---------------------------------------------------------------- 거지: 부자를 만난 뒤 12~17초마다 채팅해야 함
 const BEG_MIN = 12000, BEG_MAX = 17000;
-function clearBeg(room) { clearTimeout(room.begTimer); room.begTimer = null; room.begAt = 0; }
-function activeBeggar(room) { // 지금 채팅할 수 있는 만난 거지
-  if (room.phase !== 'day' && room.phase !== 'vote' && room.phase !== 'defense' && room.phase !== 'speak' && room.phase !== 'confirm') return null;
-  const b = room.players.find((x) => x.alive && x.role === 'beggar' && x.s.met);
-  return b && E.chatInfo(room, b).ch === 'all' ? b : null;
+// 거지가 여럿이면 거지마다 따로 카운트다운한다 (room.begAts / room.begTimers: 거지 id → 시각 / 타이머)
+function clearBeg(room, id) {
+  room.begTimers = room.begTimers || {}; room.begAts = room.begAts || {};
+  for (const k of Object.keys(room.begTimers)) if (!id || k === id) { clearTimeout(room.begTimers[k]); delete room.begTimers[k]; delete room.begAts[k]; }
+  if (!id) { clearTimeout(room.begTimer); room.begTimer = null; room.begAt = 0; }
 }
-function scheduleBeg(room) {
-  clearBeg(room);
-  const b = activeBeggar(room);
-  if (!b) return;
-  const ms = BEG_MIN + Math.floor(Math.random() * (BEG_MAX - BEG_MIN + 1));
-  room.begAt = Date.now() + ms;
-  const seq = room.seq;
-  room.begTimer = setTimeout(() => {
-    if (room.seq !== seq || !rooms.has(room.code)) return;
-    const bb = activeBeggar(room);
-    if (!bb) { room.begAt = 0; return; }
-    addChat(room, 'all', '한푼 줍쇼', bb); // 거지가 말이 없으면 대신 자동으로 말한다
-    scheduleBeg(room);
-  }, ms);
-  sendToPlayer(b, 'state', viewFor(room, b)); // 거지에게 새 카운트다운을 알림
+function canBeg(room, b) { // 지금 채팅할 수 있는 만난 거지인가
+  if (room.phase !== 'day' && room.phase !== 'vote' && room.phase !== 'defense' && room.phase !== 'speak' && room.phase !== 'confirm') return false;
+  return !!(b && b.alive && b.role === 'beggar' && b.s.met && E.chatInfo(room, b).ch === 'all');
+}
+function scheduleBeg(room, one) { // one가 있으면 그 거지만, 없으면 모든 거지를 새로 시작
+  clearBeg(room, one && one.id);
+  const list = one ? [one] : room.players.filter((x) => x.role === 'beggar');
+  for (const b of list) {
+    if (!canBeg(room, b)) continue;
+    const ms = BEG_MIN + Math.floor(Math.random() * (BEG_MAX - BEG_MIN + 1));
+    const seq = room.seq, at = Date.now() + ms;
+    room.begAts[b.id] = at; room.begAt = at;
+    room.begTimers[b.id] = setTimeout(() => {
+      if (room.seq !== seq || !rooms.has(room.code)) return;
+      if (!canBeg(room, b)) { delete room.begAts[b.id]; delete room.begTimers[b.id]; return; }
+      addChat(room, 'all', '한푼 줍쇼', b); // 거지가 말이 없으면 대신 자동으로 말한다
+      scheduleBeg(room, b);
+    }, ms);
+    room.begTimer = room.begTimers[b.id];
+    sendToPlayer(b, 'state', viewFor(room, b)); // 거지에게 새 카운트다운을 알림
+  }
 }
 
 function broadcastState(room) {
@@ -442,7 +448,7 @@ function startGame(room) {
     }
     if (p.role === 'follower') U.masterNote(room, p);
     if (p.role === 'couple') {
-      const m = room.players.find((x) => x !== p && x.role === 'couple');
+      const m = U.mateOf(room, p, 'couple');
       if (m) U.priv(room, p, `💕 당신의 커플은 ${m.name}님입니다.`);
     }
   }
@@ -751,7 +757,7 @@ function handleAction(room, p, b) {
       p.lastChat = now;
       addChat(room, info.ch, text, p, info.to);
       if (info.ch === 'all') p.chats = (p.chats || 0) + 1;
-      if (p.role === 'beggar' && p.s.met && p.alive && info.ch === 'all') scheduleBeg(room); // 거지가 말했으니 카운트다운 새로 시작
+      if (p.role === 'beggar' && p.s.met && p.alive && info.ch === 'all') scheduleBeg(room, p); // 거지가 말했으니 카운트다운 새로 시작
       return;
     }
     case 'boom': {
