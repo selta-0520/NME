@@ -1,6 +1,6 @@
 'use strict';
 // 밤 시작 / 밤 결과 처리
-const { ROLE, ROLES, LOANABLE } = require('../roles');
+const { ROLE, ROLES, LOANABLE, PAIR_OF } = require('../roles');
 const U = require('./util');
 const AB = require('./abilities');
 
@@ -36,7 +36,7 @@ function copyRoleNote(room, p, role) {
 }
 
 // 다시 나눠 줄 때 뽑을 수 있는 직업 (광대·짝이 필요한 직업·게임 시작 때만 의미 있는 직업은 제외)
-const REROLL_SKIP = new Set(['joker', 'rich']); // 거지는 부자와 함께(2자리), 커플도 2자리로 뽑는다
+const REROLL_SKIP = new Set(['joker', 'rich', 'villain', 'prophet']); // 거지는 부자와 함께(2자리), 커플도 2자리로 뽑는다
 function rerollRoles(room, list, joker, newRole) {
   const s = room.settings, enabled = new Set(s.enabledRoles || []);
   const teamOfRole = (k) => ROLE[k].team;
@@ -50,8 +50,8 @@ function rerollRoles(room, list, joker, newRole) {
   for (const team of ['mafia', 'citizen', 'neutral']) {
     const used = {};
     const on = (k) => enabled.has(k) || k === 'mafia' || k === 'citizen';
-    const poolFor = (useEnabled) => ROLES.filter((r) => r.team === team && !REROLL_SKIP.has(r.key) && (!useEnabled || (on(r.key) && (r.key !== 'beggar' || enabled.has('rich'))))).map((r) => r.key);
-    const size = (k) => (k === 'couple' || k === 'beggar' ? 2 : 1);
+    const poolFor = (useEnabled) => ROLES.filter((r) => r.team === team && !REROLL_SKIP.has(r.key) && (!useEnabled || (on(r.key) && (!PAIR_OF[r.key] || enabled.has(PAIR_OF[r.key]))))).map((r) => r.key);
+    const size = (k) => (k === 'couple' || PAIR_OF[k] ? 2 : 1);
     let left = slots[team];
     while (left > 0) {
       const ok = (k) => (used[k] || 0) < maxOf(k) && size(k) <= left;
@@ -60,7 +60,7 @@ function rerollRoles(room, list, joker, newRole) {
       const k = c.length ? U.pick(c) : (team === 'mafia' ? 'mafia' : 'citizen');
       used[k] = (used[k] || 0) + 1; left -= size(k);
       if (k === 'couple') out.push({ team, k }, { team, k });
-      else if (k === 'beggar') out.push({ team, k: 'beggar' }, { team, k: 'rich' });
+      else if (PAIR_OF[k]) out.push({ team, k }, { team, k: PAIR_OF[k] });
       else out.push({ team, k });
     }
   }
@@ -69,8 +69,14 @@ function rerollRoles(room, list, joker, newRole) {
 
 function jokerShuffle(room, joker) {
   const newRole = U.pick(['citizen', 'mafia']);
-  const list = U.alive(room);
-  const before = list.map((p) => `${p.name}(${U.roleName(p.role)})`); // 섞이기 전 직업
+  const all = U.alive(room);
+  const list = all.filter((p) => p.role !== 'prophet'); // 예언가는 광대로 직업이 바뀌지 않는다
+  // 섞이기 전 직업 공개용 목록: 예언가는 정체가 드러나지 않게 이번 판에 나오지 않은 직업으로 바꿔 적는다
+  const present = new Set(room.players.map((p) => p.role));
+  const fakeP = ROLES.filter((r) => r.team === 'neutral' && !present.has(r.key) && r.key !== 'prophet' && r.key !== 'joker').map((r) => r.key);
+  const fakeAny = ROLES.filter((r) => !present.has(r.key) && r.key !== 'prophet').map((r) => r.key);
+  const fakeRole = (fakeP.length ? U.pick(fakeP) : fakeAny.length ? U.pick(fakeAny) : 'citizen');
+  const before = all.map((p) => `${p.name}(${U.roleName(p.role === 'prophet' ? fakeRole : p.role)})`); // 섞이기 전 직업
   if (room.settings.jokerMode === 'reroll') { // 팀별 인원은 유지하고, 직업은 전체 직업에서 새로 뽑아 나눠 준다
     const picked = U.shuffle(rerollRoles(room, list, joker, newRole));
     const byTeam = { mafia: [], citizen: [], neutral: [] };
@@ -86,22 +92,37 @@ function jokerShuffle(room, joker) {
     const pool = U.shuffle(list.map((p) => (p === joker ? newRole : p.role)));
     list.forEach((p, i) => { U.setRole(room, p, pool[i], true); });
   }
-  for (const p of room.players) { p.s.known = {}; p.snap = null; }
-  for (const p of list) { // 광대로 새 예언가가 된 사람은 오늘 낮 동안 예언할 수 있다 (그 시점의 직업 기준으로 판정)
-    if (p.role === 'prophet' && p.origRole !== 'prophet') { p.guess = null; p.snap = { day: room.day, roles: Object.fromEntries(list.filter((x) => x !== p).map((x) => [x.id, x.role])) }; }
-  }
+  for (const p of room.players) p.s.known = {};
+  for (const p of list) p.baseRole = p.role; // 예언가 판정 기준: 섞인 뒤의 직업
   U.sys(room, room.settings.jokerMode === 'reroll' ? '🃏 광대의 장난으로 살아있는 모든 사람의 직업이 새로 배정되었습니다! 자신의 직업을 다시 확인하세요.' : '🃏 광대의 장난으로 살아있는 모든 사람의 직업이 뒤섞였습니다! 자신의 직업을 다시 확인하세요.');
   room.jokerBefore = before.join(', '); // 게임이 끝난 뒤 공개용으로 보관
   if (room.settings.jokerReveal === 'shuffle') U.sys(room, `📜 섞이기 전의 원래 직업: ${room.jokerBefore}`);
   for (const p of list) { if (p.role === 'follower') U.assignMaster(room, p); } // 섞인 신봉자는 새 주인을 받는다
   for (const p of list) {
     U.priv(room, p, `🎭 새 직업: ${U.roleName(p.role)} — ${ROLE[p.role].desc}`);
-    if (p.role === 'prophet' && p.snap) U.priv(room, p, '🔮 광대 덕분에 예언가가 되었어요! 오늘 낮이 끝나기 전에 살아 있는 사람들의 직업을 예언하세요. 지금 직업을 기준으로 게임이 끝났을 때 절반 이상 맞으면 우승해요.');
     if (U.inMafiaChat(p)) {
       const mates = list.filter((x) => x !== p && U.inMafiaChat(x));
       U.priv(room, p, `🔪 마피아 팀: ${U.names(mates) || '(없음)'}`);
     }
   }
+}
+
+// 🔎 직업 후보 3개 (진짜 1 + 가짜 2). 시민·마피아·중립 팀에서 1개씩, 중립이 없는 판이면 시민/마피아 1+2 또는 2+1
+function roleCandidates(room, t) {
+  const real = t.role, rt = ROLE[real].team;
+  const pickOf = (list) => list[Math.floor(Math.random() * list.length)];
+  const hasNeutral = rt === 'neutral' || room.players.some((x) => ROLE[x.role].team === 'neutral');
+  const pool = (team) => ROLES.filter((r) => r.team === team && r.key !== real && !(team === 'neutral' && r.key === 'joker' && room.jokerBefore)).map((r) => r.key); // 광대가 섞은 뒤에는 중립 후보에 광대가 나오지 않는다
+  const fakes = [];
+  if (hasNeutral) {
+    for (const team of ['citizen', 'mafia', 'neutral']) if (team !== rt) fakes.push(pickOf(pool(team)));
+  } else {
+    const cNum = Math.random() < 0.5 ? 1 : 2; // 시민 팀 후보 수 (나머지는 마피아 팀)
+    const want = { citizen: cNum, mafia: 3 - cNum };
+    want[rt] -= 1; // 진짜가 속한 팀 자리 하나는 진짜가 차지
+    for (const team of ['citizen', 'mafia']) for (let i = 0; i < want[team]; i++) fakes.push(pickOf(pool(team).filter((k) => !fakes.includes(k))));
+  }
+  return U.shuffle([real, ...fakes]);
 }
 
 function resolveNight(room) {
@@ -179,20 +200,7 @@ function resolveNight(room) {
         U.touch(room, p, t); break;
       }
       case 'inspector': { // 🔎 형사: 직업 후보 3개 (진짜 1 + 가짜 2). 시민·마피아·중립 팀에서 1개씩, 중립이 없는 판이면 시민/마피아 1+2 또는 2+1
-        const real = t.role, rt = ROLE[real].team;
-        const pickOf = (list) => list[Math.floor(Math.random() * list.length)];
-        const hasNeutral = rt === 'neutral' || room.players.some((x) => ROLE[x.role].team === 'neutral');
-        const pool = (team) => ROLES.filter((r) => r.team === team && r.key !== real && !(team === 'neutral' && r.key === 'joker' && room.jokerBefore)).map((r) => r.key); // 광대가 섞은 뒤에는 중립 후보에 광대가 나오지 않는다
-        const fakes = [];
-        if (hasNeutral) {
-          for (const team of ['citizen', 'mafia', 'neutral']) if (team !== rt) fakes.push(pickOf(pool(team)));
-        } else {
-          const cNum = Math.random() < 0.5 ? 1 : 2; // 시민 팀 후보 수 (나머지는 마피아 팀)
-          const want = { citizen: cNum, mafia: 3 - cNum };
-          want[rt] -= 1; // 진짜가 속한 팀 자리 하나는 진짜가 차지
-          for (const team of ['citizen', 'mafia']) for (let i = 0; i < want[team]; i++) fakes.push(pickOf(pool(team).filter((k) => !fakes.includes(k))));
-        }
-        const list = U.shuffle([real, ...fakes]);
+        const list = roleCandidates(room, t);
         priv(p, `🔎 ${t.name}님의 직업 후보: ${list.map((k) => ROLE[k].name).join(' / ')} (이 중 하나가 진짜예요)`);
         U.touch(room, p, t); break;
       }
@@ -308,6 +316,29 @@ function resolveNight(room) {
         break;
       }
       case 'assassin': attacks.push({ kind: 'assassin', by: p, t }); U.touch(room, p, t); break;
+      case 'hero': case 'villain': {
+        if (U.isSuper(room, p)) { attacks.push({ kind: 'super', by: p, t }); U.touch(room, p, t); break; } // 슈퍼히어로·슈퍼빌런: 밤마다 1명을 죽인다
+        if (p.role === 'hero') break; // 히어로는 투표시간에 능력을 쓴다
+        p.s.chosen = (p.s.chosen || []).concat(t.id);
+        U.touch(room, p, t);
+        if (t.role === 'hero') { // 히어로를 골랐다: 기다림 (히어로도 나를 골랐다면 접선)
+          p.s.waitFor = t.id;
+          priv(p, `🦸 ${t.name}님은 히어로였습니다! 히어로도 당신을 고르기를 기다립니다.`);
+          U.superCheck(room, p, t);
+          break;
+        }
+        const st = U.shownTeam(t);
+        if (st === 'mafia') {
+          p.s.evil = (p.s.evil || 0) + 1;
+          const max = room.players.filter((x) => x.alive && U.teamOf(x) === 'mafia').length;
+          priv(p, `🦹 ${t.name}님은 마피아입니다! (악행 스택 ${p.s.evil}/${max})`);
+          U.villainCheck(room, p);
+        } else if (st === 'citizen') {
+          const list = roleCandidates(room, t);
+          priv(p, `🦹 ${t.name}님은 시민 팀입니다. 직업 후보: ${list.map((k) => ROLE[k].name).join(' / ')} (이 중 하나가 진짜예요)`);
+        } else priv(p, `🦹 ${t.name}님은 중립 팀입니다.`);
+        break;
+      }
       default: break;
     }
   }
@@ -343,7 +374,7 @@ function resolveNight(room) {
   }
 
   // ---- 6. 공격 처리 (파괴 → 물약 → 미치광이 → 마피아 순서)
-  const order = { destroy: 0, potion: 1, madman: 2, poison: 2.5, mafia: 3, snipe: 3.5, assassin: 4 };
+  const order = { destroy: 0, potion: 1, madman: 2, poison: 2.5, super: 2.8, mafia: 3, snipe: 3.5, assassin: 4 };
   attacks.sort((a, b) => order[a.kind] - order[b.kind]);
   const kill = (victim, how, by, kind) => {
     victim.alive = false; nightDeadIds.add(victim.id);
@@ -355,7 +386,7 @@ function resolveNight(room) {
       deaths.push({ p: by, how: '테러리스트의 자폭에 휘말려 사망했습니다.' });
     }
   };
-  const HOW = { mafia: '마피아에게 살해당했습니다.', potion: '정체불명의 공격으로 사망했습니다.', madman: '정체불명의 공격으로 사망했습니다.', destroy: '파괴당했습니다. (마피아의 공격이 아닙니다)', assassin: '정체불명의 공격으로 사망했습니다.', poison: '독에 중독되어 사망했습니다.', snipe: '저격으로 인해 사망했습니다.' };
+  const HOW = { super: '정체불명의 공격으로 사망했습니다.', mafia: '마피아에게 살해당했습니다.', potion: '정체불명의 공격으로 사망했습니다.', madman: '정체불명의 공격으로 사망했습니다.', destroy: '파괴당했습니다. (마피아의 공격이 아닙니다)', assassin: '정체불명의 공격으로 사망했습니다.', poison: '독에 중독되어 사망했습니다.', snipe: '저격으로 인해 사망했습니다.' };
   let mafiaFailMsg = null;
   for (const at of attacks) {
     let t = at.t;
@@ -480,6 +511,8 @@ function resolveNight(room) {
   }
   for (const p of room.players) if (p.role === 'magician' && p.s.loan) { p.s.loan = null; p.s.lnS = null; if (p.s.dayLoan === 'detective') p.s.dayLoan = null; priv(p, `🎩 얻은 능력을 쓰지 않아 마술이 끝났습니다. ${day + 2}일차 밤에 다시 쓸 수 있어요.`); }
 
+  for (const p of room.players) U.villainCheck(room, p); // 밤사이 마피아가 줄어 스택이 가득 찬 빌런은 전향
+
   // ---- 10. 아침 공지
   U.sys(room, `☀️ ${day}일차 아침이 밝았습니다.`);
   if (mafiaFailMsg) U.sys(room, mafiaFailMsg);
@@ -497,7 +530,7 @@ function resolveNight(room) {
       if (g.role !== 'gravedigger') continue;
       const src = deaths.map((d) => d.p).find((p) => p !== g && !p.alive);
       let role = src ? src.role : 'citizen';
-      if (['couple', 'beggar', 'rich', 'gravedigger', 'joker', 'follower', 'prophet'].includes(role)) role = 'citizen';
+      if (['couple', 'beggar', 'rich', 'hero', 'villain', 'gravedigger', 'joker', 'follower', 'prophet'].includes(role)) role = 'citizen';
       copyRoleNote(room, g, role);
     }
   }

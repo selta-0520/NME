@@ -3,17 +3,18 @@
 //  - 직업마다 "최소~최대 인원"을 정할 수 있다. (⭐ 필수 = 최소 1명 이상)
 //  - 마피아·시민도 다른 직업처럼 넣기/빼기가 가능하다.
 //  - 마피아 팀 인원 = 방장이 정한 인원(0이면 참가 인원 ÷ 4, 최소 1명). 중립 팀은 팀 최대 인원까지 채운다.
-const { ROLES, roleCap } = require('../roles');
+const { ROLES, roleCap, PAIR_OF } = require('../roles');
+const SECONDS = new Set(Object.values(PAIR_OF));
 const U = require('./util');
 
-const SIZE = (k) => (k === 'couple' || k === 'beggar' ? 2 : 1); // 커플·(거지+부자)는 2명이 한 묶음 (검사·변호사는 각각 따로)
+const SIZE = (k) => (k === 'couple' || PAIR_OF[k] ? 2 : 1); // 커플·(거지+부자)는 2명이 한 묶음 (검사·변호사는 각각 따로)
 
 function assignRoles(room) {
   const s = room.settings;
   const n = room.players.length;
   const enabled = new Set(s.enabledRoles);
   const forcedSet = new Set(s.forcedRoles || []); // ⭐ 필수 = 최소 1명
-  if (!enabled.has('beggar') || !enabled.has('rich')) { enabled.delete('beggar'); enabled.delete('rich'); }
+  for (const [a, b] of Object.entries(PAIR_OF)) if (!enabled.has(a) || !enabled.has(b)) { enabled.delete(a); enabled.delete(b); } // 짝이 하나라도 꺼져 있으면 둘 다 안 나온다
   const skipped = [], notes = [];
   if (enabled.has('pharmacist') && !enabled.has('doctor')) { enabled.delete('pharmacist'); notes.push('ℹ️ 의사가 나오지 않게 설정되어 있어 약사는 나오지 않아요.'); }
   if (!s.finalDefense && (enabled.has('prosecutor') || enabled.has('lawyer'))) { enabled.delete('prosecutor'); enabled.delete('lawyer'); notes.push('ℹ️ 최후의 반론이 꺼져 있어 검사·변호사는 나오지 않아요.'); }
@@ -29,7 +30,7 @@ function assignRoles(room) {
     if (key === 'mafia' && mx > 0) mn = Math.max(mn, 1); // 마피아를 켜 두었다면 일반 마피아는 항상 1명 이상 (공격할 사람이 있어야 하니까)
     return [mn, mx];
   };
-  const keysOf = (team) => ROLES.filter((r) => r.team === team && r.key !== 'rich' && rng(r.key)[1] > 0).map((r) => r.key);
+  const keysOf = (team) => ROLES.filter((r) => r.team === team && !SECONDS.has(r.key) && rng(r.key)[1] > 0).map((r) => r.key);
   const counts = {};
   const cnt = (k) => counts[k] || 0;
   const add = (k) => { counts[k] = cnt(k) + 1; };
@@ -124,14 +125,14 @@ function assignRoles(room) {
   for (const [k, v] of Object.entries(counts)) {
     for (let i = 0; i < v; i++) {
       if (k === 'couple') list.push('couple', 'couple');
-      else if (k === 'beggar') list.push('beggar', 'rich');
+      else if (PAIR_OF[k]) list.push(k, PAIR_OF[k]);
       else list.push(k);
     }
   }
   while (list.length < n) list.push('citizen');
   const roles = U.shuffle(list).slice(0, n);
   U.shuffle(room.players).forEach((p, i) => {
-    p.role = roles[i]; p.alive = true; p.s = {}; p.team = null; p.destroyed = false; p.exorcised = false; p.blessed = false; p.blessedBy = null; p.loaning = false; p.origRole = roles[i]; p.guess = null; p.snap = null;
+    p.role = roles[i]; p.alive = true; p.s = {}; p.team = null; p.destroyed = false; p.exorcised = false; p.blessed = false; p.blessedBy = null; p.loaning = false; p.origRole = roles[i]; p.baseRole = null; p.guess = null; p.snap = null;
     p.contacted = p.role === 'mafia';
     if (p.role === 'lucky') p.s.luckyNum = 1 + Math.floor(Math.random() * 50);
   });

@@ -789,8 +789,7 @@ function predictPanel() {
     for (const id of pr.ids) { const q = pById(id); const k = pr.guesses[id]; box.append(h('div', { class: 'note' }, `${q ? q.name : '?'} → ${k && ROLE[k] ? ROLE[k].name : '(입력 안 함)'}`)); }
     return box;
   }
-  if (pr.borne) box.append(h('div', { class: 'note' }, '광대 덕분에 예언가가 되었어요. 오늘 낮이 끝나기 전에 입력하세요. 지금 직업을 기준으로 판정해요.'));
-  box.append(h('div', { class: 'note' }, '게임이 끝났을 때 절반 이상이 처음 배정된 직업과 맞으면 모든 승리가 취소되고 예언가가 우승해요. 첫날 밤 안에 저장하세요.'));
+  box.append(h('div', { class: 'note' }, '게임이 끝났을 때 절반 이상이 처음 배정된 직업(광대가 섞었다면 섞인 뒤 직업)과 맞으면 모든 승리가 취소되고 예언가가 우승해요. 첫날 밤 안에 저장하세요.'));
   for (const id of pr.ids) {
     const q = pById(id); if (!q) continue;
     const cur = predDraft[id] !== undefined ? predDraft[id] : (pr.guesses[id] || '');
@@ -1088,8 +1087,8 @@ function useField(key, label) {
     h('input', { type: 'number', inputmode: 'numeric', 'data-use': key, min: 1, max: 5, onchange: (e) => sendPatch({ uses: { [key]: Number(e.target.value) } }) }));
 }
 function sendPatch(patch) { act('settings', { patch }); }
-// 거지와 부자는 "거지 & 부자" 한 묶음: 한 번 고르면 둘이 같이 선택돼요
-const PAIR2 = { beggar: 'rich' }; // 한 묶음으로 배정되는 직업 쌍
+// 거지 & 부자, 히어로 & 빌런은 한 묶음: 한 번 고르면 둘이 같이 선택돼요
+const PAIR2 = { beggar: 'rich', hero: 'villain' }; // 한 묶음으로 배정되는 직업 쌍
 const withPair = (keys) => keys.flatMap((k) => (PAIR2[k] ? [k, PAIR2[k]] : [k]));
 function rolePatch() {
   const on = [...document.querySelectorAll('#sheet input[data-role]')].filter((c) => c.checked).map((c) => c.getAttribute('data-role'));
@@ -1114,8 +1113,9 @@ function stepper(key, kind) {
     h('button', { class: 'ghost', 'data-step': kind + ':' + key, onclick: () => go(-1) }, '−'), val,
     h('button', { class: 'ghost', 'data-step': kind + ':' + key, onclick: () => go(1) }, '+'));
 }
-function roleTitle(r) { return r.key === 'beggar' ? '거지 & 부자' : r.name; }
+function roleTitle(r) { return r.key === 'beggar' ? '거지 & 부자' : r.key === 'hero' ? '히어로 & 빌런' : r.name; }
 function roleDescEls(r, cls) {
+  if (r.key === 'hero') return [h('div', { class: cls }, '🦸 히어로: ' + r.desc), h('div', { class: cls, style: 'margin-top:4px' }, '🦹 빌런: ' + ROLE.villain.desc)];
   if (r.key !== 'beggar') return [h('div', { class: cls }, r.desc)];
   return [h('div', { class: cls }, '🙏 거지: ' + r.desc), h('div', { class: cls, style: 'margin-top:4px' }, '💰 부자: ' + ROLE.rich.desc)];
 }
@@ -1172,8 +1172,8 @@ function buildSettings() {
     h('div', { class: 'seg' }, [['shuffle', '섞은 직후'], ['end', '게임이 끝난 후'], ['off', '꺼짐']].map(([k, l]) =>
       h('button', { class: 'ghost', 'data-jr': k, onclick: () => { if (host) sendPatch({ jokerReveal: k }); } }, l))),
     h('h3', null, '🎭 사용할 직업'),
-    h('div', { class: 'note' }, '체크한 직업만 게임에 나와요. 마피아·시민도 끌 수 있어요. 커플은 2명이 함께, "거지 & 부자"는 한 번 체크하면 둘이 함께 나와요. 인원이 적으면 모든 직업이 나오지는 않아요.'),
-    h('div', { class: 'note', style: 'margin-top:4px' }, '⭐ "필수 등장"을 켜면 그 직업은 팀 최대 인원을 넘더라도 최소 1명은 무조건 나와요. (인원이 모자라면 못 넣을 수 있어요. 거지·부자는 함께 켜져요)'),
+    h('div', { class: 'note' }, '체크한 직업만 게임에 나와요. 마피아·시민도 끌 수 있어요. 커플은 2명이 함께, "거지 & 부자"·"히어로 & 빌런"은 한 번 체크하면 둘이 함께 나와요. 인원이 적으면 모든 직업이 나오지는 않아요.'),
+    h('div', { class: 'note', style: 'margin-top:4px' }, '⭐ "필수 등장"을 켜면 그 직업은 팀 최대 인원을 넘더라도 최소 1명은 무조건 나와요. (인원이 모자라면 못 넣을 수 있어요. 거지·부자, 히어로·빌런은 함께 켜져요)'),
     h('div', { class: 'note', style: 'margin-top:4px' }, '👥 "인원"의 최소·최대로 직업마다 몇 명까지 나올지 정할 수 있어요. 최소를 1 이상으로 하면 필수 등장과 같아요. (마피아는 켜 두면 항상 1명 이상 나와요)'),
     h('div', { id: 'warns' }));
 
@@ -1332,7 +1332,7 @@ function buildGuide() {
       sheet.append(h('div', { class: 'teamhead' }, h('span', { style: 'color:' + TEAM_COLOR[team] }, meta.teams[team])));
       for (const r of meta.roles.filter((x) => x.team === team && x.impl && !isPairRich(x))) {
         const included = on.includes(r.key);
-        const mine = st.me && (st.me.role === r.key || (r.key === 'beggar' && st.me.role === 'rich'));
+        const mine = st.me && (st.me.role === r.key || (r.key === 'beggar' && st.me.role === 'rich') || (r.key === 'hero' && st.me.role === 'villain'));
         sheet.append(h('div', { class: 'rrow' + (included ? '' : ' off') },
           h('div', null,
             h('div', { class: 'rn' }, roleTitle(r), mine ? h('span', { class: 'mine' }, '내 직업') : null, included ? null : h('span', { class: 'soon' }, '이번 판 제외')),

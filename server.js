@@ -137,8 +137,8 @@ function applySettings(s, patch) {
   // 필수 목록은 "최소 1명 이상"인 직업으로 항상 맞춰 둔다
   s.forcedRoles = ROLES.map((r) => r.key).filter((k) => s.enabledRoles.includes(k) && s.roleMin[k] >= 1);
 }
-// 한 묶음으로 배정되는 직업 쌍: 거지 & 부자, 검사 & 변호사. 한쪽만 바뀌어 오면 이전 상태를 보고 둘 다 켜거나 둘 다 끈다
-const PAIRS = [['beggar', 'rich']];
+// 한 묶음으로 배정되는 직업 쌍: 거지 & 부자, 히어로 & 빌런. 한쪽만 바뀌어 오면 이전 상태를 보고 둘 다 켜거나 둘 다 끈다
+const PAIRS = [['beggar', 'rich'], ['hero', 'villain']];
 const SECOND = new Set(PAIRS.map((x) => x[1]));
 function fixPair(list, prev) {
   for (const [a, b] of PAIRS) {
@@ -608,7 +608,7 @@ function resetToLobby(room) {
   room.phase = 'lobby'; room.day = 0; room.winner = null; room.night = null; room.votes = {}; room.voteActs = {};
   room.touches = []; room.pendingWin = null; room.endsAt = 0; room.chat = []; room.seq++; room.jokerBefore = null; room.defense = null; room.confirm = {}; room.wills = []; room.willChats = []; room.rps = null; room.judgeVerdict = null; room.judgeOnly = false; room.speaker = null; room.speakQueue = [];
   for (const p of room.players) {
-    p.role = null; p.alive = true; p.s = {}; p.team = null; p.contacted = false; p.destroyed = false; p.exorcised = false; p.blessed = false; p.blessedBy = null; p.loaning = false; p.origRole = null; p.guess = null;
+    p.role = null; p.alive = true; p.s = {}; p.team = null; p.contacted = false; p.destroyed = false; p.exorcised = false; p.blessed = false; p.blessedBy = null; p.loaning = false; p.origRole = null; p.baseRole = null; p.guess = null;
   }
   room.players = room.players.filter((p) => p.bot || p.conns.size > 0); // 접속이 끊긴 사람은 정리(봇은 유지)
   room.specs = (room.specs || []).filter((x) => x.conns.size > 0);
@@ -843,13 +843,11 @@ function handleAction(room, p, b) {
       return;
     }
     case 'predict': { // 예언가: 첫날 밤 안에 모든 사람의 직업을 예언
-      const borne = p.role === 'prophet' && p.snap; // 광대 덕분에 예언가가 된 경우
-      if (!borne && p.origRole !== 'prophet') fail('예언가만 예언할 수 있어요.');
-      if (borne) { if (!(p.alive && room.phase === 'day' && p.snap.day === room.day)) fail('예언은 예언가가 된 날의 낮 동안에만 입력할 수 있어요.'); }
-      else if (!(room.phase === 'night' && room.day === 1)) fail('예언은 첫날 밤에만 입력할 수 있어요.');
+      if (p.origRole !== 'prophet') fail('예언가만 예언할 수 있어요.');
+      if (!(room.phase === 'night' && room.day === 1)) fail('예언은 첫날 밤에만 입력할 수 있어요.');
       const g = {};
       for (const [id, k] of Object.entries(b.guesses && typeof b.guesses === 'object' ? b.guesses : {})) {
-        if (id !== p.id && byId(room, id) && ROLE[k] && (!borne || p.snap.roles[id])) g[id] = k;
+        if (id !== p.id && byId(room, id) && ROLE[k]) g[id] = k;
       }
       p.guess = g;
       broadcastState(room);

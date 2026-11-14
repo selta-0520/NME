@@ -82,6 +82,15 @@ function nightOptions(room, p, modeOverride) {
       return o('🧤 능력을 훔칠 사람 (한 번 고른 사람은 다시 못 골라요)', others.filter((x) => !(p.s.stolenIds || []).includes(x.id)));
     }
     case 'rich': return o('💰 거지인지 확인할 사람', others);
+    case 'hero': { // 슈퍼가 되면 밤마다 1명을 죽인다 (그 전에는 투표시간에 능력을 쓴다)
+      const m = U.superMate(room, p);
+      return m ? o('🦸 죽일 사람 (슈퍼히어로)', others.filter((x) => x.id !== m.id)) : null;
+    }
+    case 'villain': {
+      const m = U.superMate(room, p);
+      if (m) return o('🦹 죽일 사람 (슈퍼빌런)', others.filter((x) => x.id !== m.id));
+      return o('🦹 확인할 사람 (한 번 고른 사람은 다시 못 골라요)', others.filter((x) => !(p.s.chosen || []).includes(x.id)));
+    }
     case 'ghost': return o('👻 겁줄 사람', others.filter((x) => !(p.s.lastScare && p.s.lastScare.day === room.day - 1 && p.s.lastScare.id === x.id)));
     case 'assassin': return p.contacted ? o('🗡 죽일 사람 (상대의 능력을 무시)', others.filter((x) => room.settings.teamKill || !U.inMafiaChat(x))) : null;
     case 'scientist': {
@@ -110,6 +119,7 @@ function voteOptions(room, p) {
   switch (U.dayRole(p)) {
     case 'detective': return p.s.detA ? o('🕵 비교할 두 번째 사람 (투표시간)', A) : null;
     case 'informant': return o('📢 밀고할 사람 (마피아인지 확인)', others);
+    case 'hero': return U.isSuper(room, p) ? null : o('🦸 팀을 확인할 사람 (한 번 고른 사람은 다시 못 골라요)', others.filter((x) => !(p.s.chosen || []).includes(x.id)));
     case 'forger': return p.contacted ? o('🖋 조사 결과를 위조할 사람', A) : null;
     default: return null;
   }
@@ -248,6 +258,27 @@ function infoLines(room, p) {
     case 'doctor': if (p.s.lastSelfHeal === day - 1 && room.phase === 'night') L.push('💉 어젯밤 자신을 치료해서 오늘은 자신을 고를 수 없어요.'); break;
     case 'couple': { const m = other('couple'); if (m) L.push(`💕 커플: ${m.name}${m.alive ? '' : ' (사망)'}`); break; }
     case 'beggar': L.push(p.s.met ? '🎉 부자를 만났어요! 12~17초마다 채팅해야 해요. (안 하면 "한푼 줍쇼"가 자동 전송) 2일 뒤 둘 다 살아있으면 우승!' : '🙏 모든 직업을 알지만 말하거나 투표할 수 없어요.'); break;
+    case 'hero': {
+      const m = U.superMate(room, p);
+      if (m) L.push(`🦸🦹 슈퍼히어로! 파트너(슈퍼빌런): ${m.name}${m.alive ? '' : ' (사망)'} — 밤마다 1명을 죽일 수 있어요. 살아남은 사람이 슈퍼들뿐이면 우승해요.`);
+      else {
+        L.push(`🦸 선행 스택 ${p.s.good || 0}/3 — 투표시간에 사람을 골라 팀을 확인해요. 시민 팀을 3번 확인하면 시민 팀(경찰)으로 전향해요.`);
+        const w = p.s.waitFor && U.byId(room, p.s.waitFor);
+        if (w) L.push(`⏳ 빌런 ${w.name}님이 나를 고르기를 기다리는 중이에요.`);
+      }
+      break;
+    }
+    case 'villain': {
+      const m = U.superMate(room, p);
+      if (m) L.push(`🦸🦹 슈퍼빌런! 파트너(슈퍼히어로): ${m.name}${m.alive ? '' : ' (사망)'} — 밤마다 1명을 죽일 수 있어요. 살아남은 사람이 슈퍼들뿐이면 우승해요.`);
+      else {
+        const max = room.players.filter((x) => x.alive && U.teamOf(x) === 'mafia').length;
+        L.push(`🦹 악행 스택 ${p.s.evil || 0}/${max} (살아 있는 마피아 수) — 마피아를 확인해 가득 채우면 마피아 팀으로 전향해요.`);
+        const w = p.s.waitFor && U.byId(room, p.s.waitFor);
+        if (w) L.push(`⏳ 히어로 ${w.name}님이 나를 고르기를 기다리는 중이에요.`);
+      }
+      break;
+    }
     case 'rich': L.push(p.s.meetDay != null ? '🎉 거지를 만났어요! 둘 다 살아있으면 곧 우승해요.' : '💰 거지를 찾아 보세요.'); break;
     case 'revolutionary': L.push(p.s.joined ? `✊ ${p.team === 'mafia' ? '마피아' : '시민'} 팀이 되었어요.` : '✊ 4일차 낮까지 아무도 나에게 능력을 쓰지 않으면 우승해요.'); break;
     case 'judge': L.push(U.usesLeft(room, p, 'judge') <= 0 ? '⚖️ 판결을 모두 내렸어요.' : `⚖️ 찬반투표 시간에 처형의 찬성/반대를 직접 결정할 수 있어요. (${U.usesTag(room, p, 'judge')})`); break;

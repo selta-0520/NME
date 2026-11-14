@@ -107,6 +107,25 @@ function resolveVote(room, opts) {
         const same = U.shownTeam(a) === U.shownTeam(t);
         U.priv(room, p, `🕵 비교 결과: ${a.name}님과 ${t.name}님은 ${same ? '같은 팀입니다.' : '다른 팀입니다.'}`);
       }
+    } else if (p.role === 'hero' && !U.isSuper(room, p)) { // 🦸 히어로: 고른 사람의 팀을 확인한다
+      p.s.chosen = (p.s.chosen || []).concat(t.id);
+      U.touch(room, p, t);
+      if (t.role === 'villain') { // 빌런을 골랐다: 기다림 (빌런도 나를 골랐다면 접선)
+        p.s.waitFor = t.id;
+        U.priv(room, p, `🦹 ${t.name}님은 빌런이었습니다! 빌런도 당신을 고르기를 기다립니다.`);
+        U.superCheck(room, p, t);
+      } else {
+        const st = U.shownTeam(t);
+        if (st === 'mafia') U.priv(room, p, `🦸 ${t.name}님은 마피아 팀입니다.`);
+        else if (st === 'citizen') {
+          p.s.good = (p.s.good || 0) + 1;
+          U.priv(room, p, `🦸 ${t.name}님은 시민 팀입니다! (선행 스택 ${p.s.good}/3)`);
+          if (p.s.good >= 3) {
+            U.priv(room, p, '🦸 선행 스택이 가득 찼습니다! 시민 팀으로 전향합니다. (원래 능력은 사라지고 경찰처럼 행동해요)');
+            U.setRole(room, p, 'police');
+          }
+        } else U.priv(room, p, `🦸 ${t.name}님은 중립 팀입니다.`);
+      }
     }
   }
   for (const p of room.players) { if (p.s) { p.s.detA = null; p.s.forged = false; } } // 지난 위조는 끝나고 새 위조가 시작
@@ -144,6 +163,12 @@ function checkWin(room) {
   const C = alive.filter((p) => U.teamOf(p) === 'citizen').length;
   const N = alive.filter((p) => U.teamOf(p) === 'neutral');
   const ids = (t) => room.players.filter((p) => U.teamOf(p) === t).map((p) => p.id);
+  // 슈퍼히어로·슈퍼빌런: 살아남은 사람이 슈퍼들뿐이면 우승 (둘은 같은 팀)
+  const supers = alive.filter((p) => U.isSuper(room, p));
+  if (supers.length && supers.length === alive.length) {
+    const all = room.players.filter((p) => U.isSuper(room, p)).map((p) => p.id);
+    return { kind: 'duo', text: `🦸🦹 슈퍼히어로·슈퍼빌런이 끝까지 살아남아 우승했습니다! (${U.names(supers)}님)`, ids: all };
+  }
   // 신봉자: 주인이 살아있고 주인의 팀이 이기면 함께 우승
   const followersOf = (team) => alive.filter((p) => {
     if (p.role !== 'follower' || !p.s.master) return false;
@@ -159,29 +184,28 @@ function checkWin(room) {
   if (M > 0 && M >= alive.length - M) return { kind: 'mafia', text: fText('mafia', '🔪 마피아 팀이 승리했습니다!'), ids: ids('mafia').concat(followersOf('mafia')) };
   // 짝(부자/거지)이 죽어서 더는 이길 수 없는 거지·부자, 혼자서는 이길 수 없는 신봉자는 시민 승리를 막지 않는다
   const hasRole = (r) => alive.some((p) => p.role === r);
-  const threat = N.filter((p) => p.role !== 'follower' && p.role !== 'prophet' && !((p.role === 'beggar' && !hasRole('rich')) || (p.role === 'rich' && !hasRole('beggar'))));
+  const threat = N.filter((p) => p.role !== 'follower' && p.role !== 'prophet' && !((p.role === 'beggar' && !hasRole('rich')) || (p.role === 'rich' && !hasRole('beggar')) || ((p.role === 'hero' || p.role === 'villain') && !U.isSuper(room, p) && !hasRole(p.role === 'hero' ? 'villain' : 'hero'))));
   if (M === 0 && threat.length === 0 && C > 0) return { kind: 'citizen', text: fText('citizen', '🎉 시민 팀이 승리했습니다!'), ids: ids('citizen').concat(followersOf('citizen')) };
   if (alive.length === 1 && N.length === 1) {
     if (N[0].role === 'follower') return { kind: 'draw', text: '🤝 신봉자만 남아 승부가 나지 않아 무승부입니다.', ids: [] };
     return { kind: 'neutral', text: `🌀 중립 팀 ${N[0].name}님(${U.roleName(N[0].role)})이 끝까지 살아남아 우승했습니다!`, ids: [N[0].id] };
   }
   // 중립만 2명 이상 남았는데 아무도 죽일 수 없으면 무승부
-  const killer = (p) => p.role === 'madman' || (p.role === 'destroyer' && (p.s.destroyUsed || 0) < U.destroyLimit(room));
+  const killer = (p) => p.role === 'madman' || p.role === 'hero' || p.role === 'villain' || (p.role === 'destroyer' && (p.s.destroyUsed || 0) < U.destroyLimit(room));
   if (M === 0 && C === 0 && N.length > 1 && !N.some(killer)) {
     return { kind: 'draw', text: '🤝 승부가 나지 않아 무승부입니다.', ids: [] };
   }
   return null;
 }
 
-// 예언가: 게임이 끝났을 때 절반 이상 맞혔다면 모든 승리를 취소하고 예언가가 우승 (처음 배정된 직업 기준)
+// 예언가: 게임이 끝났을 때 절반 이상 맞혔다면 모든 승리를 취소하고 예언가가 우승 (처음 배정된 직업 기준, 광대가 섞었다면 섞인 뒤의 직업 기준)
 function prophetCheck(room, w) {
   const won = [];
   for (const p of room.players) {
-    const borne = p.role === 'prophet' && p.snap; // 광대로 중간에 예언가가 된 경우: 그때 살아 있던 사람들의 그때 직업 기준
-    if ((p.origRole !== 'prophet' && !borne) || !p.guess) continue;
-    const others = borne ? room.players.filter((x) => x !== p && p.snap.roles[x.id]) : room.players.filter((x) => x !== p);
+    if (p.origRole !== 'prophet' || !p.guess) continue;
+    const others = room.players.filter((x) => x !== p);
     if (!others.length) continue;
-    const right = others.filter((x) => p.guess[x.id] === (borne ? p.snap.roles[x.id] : x.origRole)).length;
+    const right = others.filter((x) => p.guess[x.id] === (x.baseRole || x.origRole)).length; // 광대가 섞었다면 섞인 뒤의 직업 기준
     if (right * 2 >= others.length) won.push({ p, right, total: others.length });
   }
   if (!won.length) return w;

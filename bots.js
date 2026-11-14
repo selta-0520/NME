@@ -319,6 +319,10 @@ function pickNight(room, p, opt, mode) {
       return (best(cands, (c) => (claimedRole(room, c.id, 'police') ? 120 : 0) + (claimedRole(room, c.id, 'doctor') ? 80 : 0) + (claimedRole(room, c.id, 'bodyguard') ? 40 : 0) + trust(c) * 0.15, N * 2) || {}).id;
     case 'thief': // 훔칠 사람: 능력이 있을 것 같은(경찰·의사로 주장한) 사람, 한 번 고른 사람은 제외됨
       return (best(cands, (c) => (claimedRole(room, c.id, 'police') ? 120 : 0) + (claimedRole(room, c.id, 'doctor') ? 90 : 0) + (claimedRole(room, c.id, 'bodyguard') ? 40 : 0) + (A.talk[c.id] > 0 ? 10 : 0), N * 2) || {}).id;
+    case 'hero': case 'villain': { // 슈퍼면 위협적인 사람을 죽이고, 아니면 수상한 사람(마피아 후보)을 확인
+      if (U.isSuper(room, p)) return (best(cands, (c) => killValue(room, p, c), N * 2) || {}).id;
+      return (best(cands, (c) => S(c) + (chance(0.25) ? 60 : 0), N * 2) || {}).id;
+    }
     case 'vigilante': { const c = best(cands, (x) => S(x), 0); return c && S(c) > 70 ? c.id : null; } // 훔치거나 빌린 저격: 확실할 때만
     default: return rnd(cands).id;
   }

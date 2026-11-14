@@ -103,6 +103,31 @@ U.usesTag = (room, p, key) => { const m = U.maxUses(room, p, key); return m <= 1
 U.bettorNeed = (room) => Math.max(1, Math.ceil((room.startN || room.players.length) / 5));
 // 약사: 접선한 의사가 죽었는지(= 약을 줄 수 있는 상태인지)
 U.pharmaArmed = (room, p) => { if (p.s.armed) return true; const d = p.s.doc && U.byId(room, p.s.doc); if (d && !d.alive) { p.s.armed = true; return true; } return false; };
+// 히어로·빌런: 서로 접선해 슈퍼가 된 짝 (둘 다 상태가 맞아야 한다)
+U.superMate = (room, p) => {
+  if (!p.s || !p.s.sup || !p.s.mate || (p.role !== 'hero' && p.role !== 'villain')) return null;
+  const m = U.byId(room, p.s.mate);
+  return m && m.s && m.s.sup && m.s.mate === p.id && ((p.role === 'hero' && m.role === 'villain') || (p.role === 'villain' && m.role === 'hero')) ? m : null;
+};
+U.isSuper = (room, p) => !!U.superMate(room, p);
+// 히어로 ↔ 빌런이 서로 기다림 상태가 되면 접선해서 슈퍼히어로·슈퍼빌런이 된다
+U.superCheck = (room, a, b) => {
+  if (!a || !b || !a.alive || !b.alive) return false;
+  if (U.isSuper(room, a) || U.isSuper(room, b)) return false;
+  if (a.s.waitFor !== b.id || b.s.waitFor !== a.id) return false;
+  a.s.sup = true; b.s.sup = true; a.s.mate = b.id; b.s.mate = a.id; a.s.waitFor = null; b.s.waitFor = null;
+  for (const [x, y] of [[a, b], [b, a]]) U.priv(room, x, `🦸🦹 ${y.name}님과 접선했습니다! 이제 당신은 슈퍼${x.role === 'hero' ? '히어로' : '빌런'}예요. 밤마다 1명을 죽일 수 있고, 살아남은 사람이 슈퍼들뿐이 되면 우승해요. (슈퍼가 된 뒤에는 전향하지 않아요)`);
+  return true;
+};
+// 빌런: 악행 스택이 살아 있는 마피아 수에 도달하면 마피아 팀으로 전향
+U.villainCheck = (room, p) => {
+  if (p.role !== 'villain' || !p.alive || U.isSuper(room, p) || !p.s.evil) return false;
+  const max = room.players.filter((x) => x.alive && U.teamOf(x) === 'mafia').length;
+  if (max <= 0 || p.s.evil < max) return false;
+  U.priv(room, p, '🦹 악행 스택이 가득 찼습니다! 마피아 팀으로 전향합니다. (원래 능력은 사라져요)');
+  U.setRole(room, p, 'mafia');
+  return true;
+};
 // 마술사: 능력을 쓸 수 있는 밤인가 (쓰고 나면 하루 쉰다)
 U.magicReady = (room, p) => !p.s.magicUsed || room.day >= p.s.magicUsed + 2;
 // 수호자: 그날 투표 후보에서 제외된 사람
