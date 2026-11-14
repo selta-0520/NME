@@ -125,6 +125,14 @@ function roleCandidates(room, t) {
   return U.shuffle([real, ...fakes]);
 }
 
+// 중립 팀을 골랐을 때 빌런에게 보여 줄 시민 팀 직업 3개 (모두 가짜)
+function fakeCitizenRoles(room) {
+  const on = new Set((room.settings.enabledRoles || []).concat(['citizen']));
+  let pool = ROLES.filter((r) => r.team === 'citizen' && on.has(r.key)).map((r) => r.key);
+  if (pool.length < 3) pool = ROLES.filter((r) => r.team === 'citizen').map((r) => r.key);
+  return U.shuffle(pool).slice(0, 3);
+}
+
 function resolveNight(room) {
   const day = room.day;
   const acts = room.night.acts;
@@ -333,10 +341,11 @@ function resolveNight(room) {
           const max = room.players.filter((x) => x.alive && U.teamOf(x) === 'mafia').length;
           priv(p, `🦹 ${t.name}님은 마피아입니다! (악행 스택 ${p.s.evil}/${max})`);
           U.villainCheck(room, p);
-        } else if (st === 'citizen') {
-          const list = roleCandidates(room, t);
-          priv(p, `🦹 ${t.name}님은 시민 팀입니다. 직업 후보: ${list.map((k) => ROLE[k].name).join(' / ')} (이 중 하나가 진짜예요)`);
-        } else priv(p, `🦹 ${t.name}님은 중립 팀입니다.`);
+        } else {
+          // 시민 팀이면 진짜 1 + 가짜 2, 중립 팀이면 시민 팀 직업 3개가 모두 가짜 (어느 쪽인지 알 수 없다)
+          const list = st === 'citizen' ? roleCandidates(room, t) : fakeCitizenRoles(room);
+          priv(p, `🦹 ${t.name}님의 직업 후보: ${list.map((k) => ROLE[k].name).join(' / ')} (진짜가 없을 수도 있어요)`);
+        }
         break;
       }
       default: break;

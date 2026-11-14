@@ -1146,6 +1146,7 @@ function buildSettings() {
     h('h3', null, '🔢 능력 사용 횟수'),
     h('div', { class: 'note' }, '횟수 제한이 있는 능력을 몇 번까지 쓸 수 있는지 정해요. (기본 1회)'),
     ...USE_FIELDS.map(([k, label]) => useField(k, label)),
+    numField('heroStack', '🦸 히어로가 시민 팀으로 전향하는 데 필요한 선행 스택 (기본 3)', '번'),
     numField('destroyMax', '💥 파괴자 파괴 횟수 (0 = 자동: 시작 인원 ÷ 3)', '번'),
     h('h3', null, '기타'),
     h('label', { class: 'field' }, h('span', null, '마피아 팀킬 허용 (마피아 팀이 같은 팀도 공격할 수 있음, 기본 꺼짐)'),

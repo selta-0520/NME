@@ -262,7 +262,7 @@ function infoLines(room, p) {
       const m = U.superMate(room, p);
       if (m) L.push(`🦸🦹 슈퍼히어로! 파트너(슈퍼빌런): ${m.name}${m.alive ? '' : ' (사망)'} — 밤마다 1명을 죽일 수 있어요. 살아남은 사람이 슈퍼들뿐이면 우승해요.`);
       else {
-        L.push(`🦸 선행 스택 ${p.s.good || 0}/3 — 투표시간에 사람을 골라 팀을 확인해요. 시민 팀을 3번 확인하면 시민 팀(경찰)으로 전향해요.`);
+        L.push(`🦸 선행 스택 ${p.s.good || 0}/${U.heroNeed(room)} — 투표시간에 사람을 골라 팀을 확인해요. 마피아 팀이 아닌 사람(시민·중립)을 확인할 때마다 쌓이고, 가득 차면 시민 팀(경찰)으로 전향해요.`);
         const w = p.s.waitFor && U.byId(room, p.s.waitFor);
         if (w) L.push(`⏳ 빌런 ${w.name}님이 나를 고르기를 기다리는 중이에요.`);
       }

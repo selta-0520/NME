@@ -117,14 +117,16 @@ function resolveVote(room, opts) {
       } else {
         const st = U.shownTeam(t);
         if (st === 'mafia') U.priv(room, p, `🦸 ${t.name}님은 마피아 팀입니다.`);
-        else if (st === 'citizen') {
+        else {
+          // 시민 팀이든 중립 팀이든 마피아 팀이 아니면 선행 스택이 쌓인다
+          const need = U.heroNeed(room);
           p.s.good = (p.s.good || 0) + 1;
-          U.priv(room, p, `🦸 ${t.name}님은 시민 팀입니다! (선행 스택 ${p.s.good}/3)`);
-          if (p.s.good >= 3) {
+          U.priv(room, p, `🦸 ${t.name}님은 ${st === 'citizen' ? '시민' : '중립'} 팀입니다! (선행 스택 ${p.s.good}/${need})`);
+          if (p.s.good >= need) {
             U.priv(room, p, '🦸 선행 스택이 가득 찼습니다! 시민 팀으로 전향합니다. (원래 능력은 사라지고 경찰처럼 행동해요)');
             U.setRole(room, p, 'police');
           }
-        } else U.priv(room, p, `🦸 ${t.name}님은 중립 팀입니다.`);
+        }
       }
     }
   }

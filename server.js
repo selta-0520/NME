@@ -37,6 +37,7 @@ const LIMITS = {
   neutralMax: [0, 10],
   gamblerHits: [1, 10],
   destroyMax: [0, 10],
+  heroStack: [1, 10],
 };
 const USES_LIMIT = [1, 5]; // 횟수 제한 능력의 최소~최대 사용 횟수
 
@@ -70,6 +71,7 @@ function defaultSettings() {
     citizenSpecialMax: 12,
     neutralMax: 2,
     gamblerHits: 3,
+    heroStack: 3, // 히어로가 시민 팀으로 전향하는 데 필요한 선행 스택
     destroyMax: 0, // 파괴자 파괴 횟수 (0 = 자동: 시작 인원 ÷ 3)
     uses: Object.fromEntries(U.USE_KEYS.map((k) => [k, 1])), // 횟수 제한 능력의 사용 횟수
     abstain: false, // 투표 기권 허용
